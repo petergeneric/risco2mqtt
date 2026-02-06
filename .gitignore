@@ -7,3 +7,5 @@
 .test/*
 /.idea/
 node_modules/
+/target/
+
