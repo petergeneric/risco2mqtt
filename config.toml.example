@@ -1,0 +1,23 @@
+[panel]
+panel_type = "LightSys"
+panel_ip = "192.168.1.2"
+panel_port = 1000
+panel_id = 1
+panel_password = "1234"
+discover_code = true
+reconnect_delay_ms = 2000
+ntp_server = "192.168.1.1"
+ntp_port = "123"
+disable_risco_cloud = true
+
+[mqtt]
+url = "mqtt://127.0.0.1:1883"
+client_id = "risco-bridge"
+subscribe_topic = "risco/cmd"
+publish_topic = "risco"
+snapshot_interval_secs = 60
+
+[zone_names]
+# Override zone labels by zone ID
+# 1 = "Front Door"
+# 5 = "Side Window"
