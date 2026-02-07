@@ -111,6 +111,11 @@ pub async fn discover_access_code(
     for password_length in 1..=6u32 {
         let start = 0;
         for password in start..=max_password {
+            // Check connectivity before each attempt
+            if !*engine.connected_flag().read().await {
+                return Err(RiscoError::Disconnected);
+            }
+
             // Only test passwords that fit within the current length window
             if password_length > 1 && password.to_string().len() >= password_length as usize {
                 continue;
@@ -123,6 +128,10 @@ pub async fn discover_access_code(
                 Ok(response) if response.contains("ACK") => {
                     info!("Discovered access code: {}", padded);
                     return Ok(padded);
+                }
+                Err(RiscoError::Disconnected) => {
+                    warn!("Socket disconnected during access code discovery");
+                    return Err(RiscoError::Disconnected);
                 }
                 _ => {
                     debug!("Access code {} is not correct", padded);

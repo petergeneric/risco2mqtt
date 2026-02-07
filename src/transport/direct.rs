@@ -304,28 +304,31 @@ async fn process_message(
 
     if let Ok(id_num) = receive_id.parse::<u8>() {
         if id_num >= 50 {
-            // Unsolicited message from panel — send ACK
-            debug!("Unsolicited data from panel (id={}), sending ACK", id_num);
+            // Unsolicited message from panel — always send ACK
             let _ = engine.send_ack(receive_id).await;
-            // Also emit the data for processing
-            emit_panel_data(event_tx, &decoded.command);
+
+            // Check for duplicate message ID
+            let last_id_arc = engine.last_received_unsolicited_id();
+            let mut last_id = last_id_arc.lock().await;
+            if *last_id == Some(id_num) {
+                debug!("Duplicate unsolicited message (id={}), skipping", id_num);
+            } else {
+                *last_id = Some(id_num);
+                debug!("Unsolicited data from panel (id={})", id_num);
+                emit_panel_data(event_tx, &decoded.command);
+            }
         } else {
-            // Response to our command — route to pending sender
+            // Response to our command — route to matching pending command by ID
             let pending_arc = engine.pending_commands();
             let mut pending = pending_arc.lock().await;
-            let seq_arc = engine.sequence_id();
-            let current_seq = *seq_arc.lock().await;
-            if id_num == current_seq {
-                if let Some(sender) = pending.remove(&id_num) {
-                    let _ = sender.send(decoded.command.clone());
-                    debug!("Routed response for seq {}", id_num);
-                }
+            if let Some(sender) = pending.remove(&id_num) {
+                let _ = sender.send(decoded.command.clone());
+                debug!("Routed response for seq {}", id_num);
+            } else {
+                debug!("No pending command for seq {} (possibly already timed out)", id_num);
             }
         }
     }
-
-    // Whether expected or not, emit for analysis
-    emit_panel_data(event_tx, &decoded.command);
 }
 
 /// Emit panel data through the event system so the panel can update cached state.

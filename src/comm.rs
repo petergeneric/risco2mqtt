@@ -12,7 +12,7 @@ use crate::devices::output::{Output, OutputType};
 use crate::devices::partition::Partition;
 use crate::devices::system::MBSystem;
 use crate::devices::zone::{Zone, ZoneTechnology};
-use crate::error::{RiscoError, Result};
+use crate::error::{PanelErrorCode, RiscoError, Result};
 use crate::event::EventSender;
 use crate::protocol::{is_ack, parse_tab_separated_labels, parse_tab_separated_trimmed, parse_value_after_eq};
 use crate::transport::command::CommandEngine;
@@ -284,37 +284,73 @@ impl RiscoComm {
     }
 
     /// Query all zone data from the panel.
+    ///
+    /// Queries zones in batches of 8. If the panel returns an N19 error
+    /// ("Device Doesn't Exist") for a batch, discovery stops early and
+    /// only the zones discovered so far are returned. This handles panels
+    /// where `max_zones` exceeds the actual physical zone count.
     pub async fn get_all_zones(&self) -> Result<Vec<Zone>> {
         debug!("Retrieving zone configuration");
         let mut zones: Vec<Zone> = (1..=self.max_zones).map(Zone::new).collect();
+        let mut actual_count = self.max_zones as usize;
 
-        for batch_start in (0..self.max_zones).step_by(8) {
+        'batch: for batch_start in (0..self.max_zones).step_by(8) {
             let min = batch_start + 1;
             let max = (batch_start + 8).min(self.max_zones);
 
-            let ztypes = self
-                .send_command(&format!("ZTYPE*{}:{}?", min, max), false)
-                .await?;
+            let ztypes = match self.send_command(&format!("ZTYPE*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let ztypes = parse_tab_separated_trimmed(&ztypes);
 
-            let zparts = self
-                .send_command(&format!("ZPART&*{}:{}?", min, max), false)
-                .await?;
+            let zparts = match self.send_command(&format!("ZPART&*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let zparts = parse_tab_separated_trimmed(&zparts);
 
-            let zareas = self
-                .send_command(&format!("ZAREA&*{}:{}?", min, max), false)
-                .await?;
+            let zareas = match self.send_command(&format!("ZAREA&*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let zareas = parse_tab_separated_trimmed(&zareas);
 
-            let zlabels = self
-                .send_command(&format!("ZLBL*{}:{}?", min, max), false)
-                .await?;
+            let zlabels = match self.send_command(&format!("ZLBL*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let zlabels = parse_tab_separated_labels(&zlabels);
 
-            let zstatus = self
-                .send_command(&format!("ZSTT*{}:{}?", min, max), false)
-                .await?;
+            let zstatus = match self.send_command(&format!("ZSTT*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let zstatus = parse_tab_separated_trimmed(&zstatus);
 
             // Zone link types are queried individually
@@ -367,36 +403,69 @@ impl RiscoComm {
             }
         }
 
+        zones.truncate(actual_count);
+        debug!("Zone discovery complete: {} zones found", zones.len());
         Ok(zones)
     }
 
     /// Query all output data from the panel.
+    ///
+    /// Queries outputs in batches of 8. If the panel returns an N19 error
+    /// ("Device Doesn't Exist") for a batch, discovery stops early and
+    /// only the outputs discovered so far are returned. This handles panels
+    /// where `max_outputs` exceeds the actual physical output count (e.g.,
+    /// ProsysPlus with 262 max outputs but only 16 physical outputs).
     pub async fn get_all_outputs(&self) -> Result<Vec<Output>> {
         debug!("Retrieving output configuration");
         let mut outputs: Vec<Output> = (1..=self.max_outputs).map(Output::new).collect();
+        let mut actual_count = self.max_outputs as usize;
 
-        for batch_start in (0..self.max_outputs).step_by(8) {
+        'batch: for batch_start in (0..self.max_outputs).step_by(8) {
             let min = batch_start + 1;
             let max = (batch_start + 8).min(self.max_outputs);
 
-            let otypes = self
-                .send_command(&format!("OTYPE*{}:{}?", min, max), false)
-                .await?;
+            let otypes = match self.send_command(&format!("OTYPE*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let otypes = parse_tab_separated_trimmed(&otypes);
 
-            let olabels = self
-                .send_command(&format!("OLBL*{}:{}?", min, max), false)
-                .await?;
+            let olabels = match self.send_command(&format!("OLBL*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let olabels = parse_tab_separated_labels(&olabels);
 
-            let ostatus = self
-                .send_command(&format!("OSTT*{}:{}?", min, max), false)
-                .await?;
+            let ostatus = match self.send_command(&format!("OSTT*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let ostatus = parse_tab_separated_trimmed(&ostatus);
 
-            let ogroups = self
-                .send_command(&format!("OGROP*{}:{}?", min, max), false)
-                .await?;
+            let ogroups = match self.send_command(&format!("OGROP*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let ogroups = parse_tab_separated_trimmed(&ogroups);
 
             for j in 0..(max - min + 1) as usize {
@@ -435,26 +504,45 @@ impl RiscoComm {
             }
         }
 
+        outputs.truncate(actual_count);
+        debug!("Output discovery complete: {} outputs found", outputs.len());
         Ok(outputs)
     }
 
     /// Query all partition data from the panel.
+    ///
+    /// Queries partitions in batches of 8. If the panel returns an N19 error
+    /// ("Device Doesn't Exist") for a batch, discovery stops early and
+    /// only the partitions discovered so far are returned.
     pub async fn get_all_partitions(&self) -> Result<Vec<Partition>> {
         debug!("Retrieving partition configuration");
         let mut partitions: Vec<Partition> = (1..=self.max_parts).map(Partition::new).collect();
+        let mut actual_count = self.max_parts as usize;
 
-        for batch_start in (0..self.max_parts).step_by(8) {
+        'batch: for batch_start in (0..self.max_parts).step_by(8) {
             let min = batch_start + 1;
             let max = (batch_start + 8).min(self.max_parts);
 
-            let plabels = self
-                .send_command(&format!("PLBL*{}:{}?", min, max), false)
-                .await?;
+            let plabels = match self.send_command(&format!("PLBL*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Partition slot {} doesn't exist, stopping partition discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let plabels = parse_tab_separated_labels(&plabels);
 
-            let pstatus = self
-                .send_command(&format!("PSTT*{}:{}?", min, max), false)
-                .await?;
+            let pstatus = match self.send_command(&format!("PSTT*{}:{}?", min, max), false).await {
+                Ok(resp) if is_n19(&resp) => {
+                    debug!("Partition slot {} doesn't exist, stopping partition discovery", min);
+                    actual_count = (min - 1) as usize;
+                    break 'batch;
+                }
+                Ok(resp) => resp,
+                Err(e) => return Err(e),
+            };
             let pstatus = parse_tab_separated_trimmed(&pstatus);
 
             for j in 0..(max - min + 1) as usize {
@@ -469,6 +557,8 @@ impl RiscoComm {
             }
         }
 
+        partitions.truncate(actual_count);
+        debug!("Partition discovery complete: {} partitions found", partitions.len());
         Ok(partitions)
     }
 
@@ -512,6 +602,16 @@ impl RiscoComm {
     pub fn firmware_version(&self) -> Option<&str> {
         self.firmware_version.as_deref()
     }
+}
+
+/// Check if a panel response indicates "Device Doesn't Exist" (N19 error).
+///
+/// When querying device slots beyond the physical device count, the panel
+/// returns an N19 error code. This is used during discovery to stop early
+/// rather than failing the entire discovery process.
+fn is_n19(response: &str) -> bool {
+    let trimmed = response.trim();
+    PanelErrorCode::from_code(trimmed) == Some(PanelErrorCode::N19)
 }
 
 /// Get the local GMT timezone offset string (e.g., "+02:00").

@@ -111,6 +111,7 @@ fn default_snapshot_interval() -> u64 {
 
 fn parse_panel_type(s: &str) -> Result<PanelType> {
     match s.to_lowercase().as_str() {
+        "agility4" => Ok(PanelType::Agility4),
         "agility" => Ok(PanelType::Agility),
         "wicomm" => Ok(PanelType::WiComm),
         "wicommpro" => Ok(PanelType::WiCommPro),

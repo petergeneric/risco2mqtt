@@ -9,6 +9,8 @@ use crate::constants::PanelHwType;
 /// Each variant only differs in max zones/partitions/outputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelType {
+    /// Agility 4 (RW032): 32 zones, 3 partitions, 4 outputs
+    Agility4,
     /// Agility (RW132): 36 zones, 3 partitions, 4 outputs
     Agility,
     /// WiComm (RW232): 36 zones, 3 partitions, 4 outputs
@@ -27,6 +29,7 @@ impl PanelType {
     /// Get the expected hardware type string for panel type verification.
     pub fn hardware_type(&self) -> PanelHwType {
         match self {
+            Self::Agility4 => PanelHwType::RW032,
             Self::Agility => PanelHwType::RW132,
             Self::WiComm => PanelHwType::RW232,
             Self::WiCommPro => PanelHwType::RW332,
@@ -41,6 +44,7 @@ impl PanelType {
 /// Returns (max_zones, max_partitions, max_outputs).
 pub fn panel_limits(panel_type: PanelType, firmware: Option<&str>) -> (u32, u32, u32) {
     match panel_type {
+        PanelType::Agility4 => (32, 3, 4),
         PanelType::Agility => (36, 3, 4),
         PanelType::WiComm => (36, 3, 4),
         PanelType::WiCommPro => (36, 3, 4),
@@ -308,6 +312,12 @@ mod tests {
         assert_eq!(PanelType::LightSys.hardware_type(), PanelHwType::RP432);
         assert_eq!(PanelType::ProsysPlus.hardware_type(), PanelHwType::RP512);
         assert_eq!(PanelType::GTPlus.hardware_type(), PanelHwType::RP512);
+    }
+
+    #[test]
+    fn test_agility4_panel() {
+        assert_eq!(panel_limits(PanelType::Agility4, None), (32, 3, 4));
+        assert_eq!(PanelType::Agility4.hardware_type(), PanelHwType::RW032);
     }
 
     #[test]

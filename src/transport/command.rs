@@ -44,6 +44,8 @@ pub struct CommandEngine {
     last_received_buffer: Arc<Mutex<Option<Vec<u8>>>>,
     /// Crypt key validity flag for discovery
     pub crypt_key_valid: Arc<RwLock<Option<bool>>>,
+    /// Last received unsolicited message ID (for dedup)
+    last_received_unsolicited_id: Arc<Mutex<Option<u8>>>,
 }
 
 const BAD_CRC_LIMIT: u32 = 10;
@@ -70,6 +72,7 @@ impl CommandEngine {
             last_misunderstood: Arc::new(Mutex::new(None)),
             last_received_buffer: Arc::new(Mutex::new(None)),
             crypt_key_valid: Arc::new(RwLock::new(None)),
+            last_received_unsolicited_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -110,6 +113,10 @@ impl CommandEngine {
         self.last_received_buffer.clone()
     }
 
+    pub fn last_received_unsolicited_id(&self) -> Arc<Mutex<Option<u8>>> {
+        self.last_received_unsolicited_id.clone()
+    }
+
     pub fn sequence_id(&self) -> Arc<Mutex<u8>> {
         self.sequence_id.clone()
     }
@@ -135,69 +142,85 @@ impl CommandEngine {
     }
 
     /// Send a command and wait for a response.
+    ///
+    /// Retries up to 2 times on timeout with a fresh sequence ID.
     pub async fn send_command(&self, command_str: &str, is_prog_cmd: bool) -> Result<String> {
         // Wait while in prog mode and this is not a prog command
         while *self.in_prog.read().await && !is_prog_cmd {
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
 
-        if !*self.connected.read().await {
-            return Err(RiscoError::Disconnected);
+        let max_attempts = 3u8;
+
+        for attempt in 1..=max_attempts {
+            if !*self.connected.read().await {
+                return Err(RiscoError::Disconnected);
+            }
+
+            let timeout_duration = self.get_timeout().await;
+
+            if attempt > 1 {
+                debug!("Retrying command (attempt {}): {}", attempt, command_str);
+            } else {
+                debug!("Sending command: {}", command_str);
+            }
+
+            let (tx, rx) = oneshot::channel();
+            let cmd_id = {
+                let seq = self.sequence_id.lock().await;
+                let id = *seq;
+                self.pending.lock().await.insert(id, tx);
+                id
+            };
+            let cmd_id_str = format!("{:02}", cmd_id);
+
+            // Encrypt and send
+            let encoded = {
+                let mut crypt = self.crypt.lock().await;
+                crypt.encode_command(command_str, &cmd_id_str, None)
+            };
+
+            {
+                let mut writer = self.writer.lock().await;
+                writer.write_all(&encoded).await.map_err(|e| {
+                    error!("Failed to write command: {}", e);
+                    RiscoError::Io(e)
+                })?;
+            }
+
+            debug!("Command sent (seq {})", cmd_id);
+
+            // Wait for response with timeout
+            match timeout(timeout_duration, rx).await {
+                Ok(Ok(response)) => {
+                    debug!("Received response for seq {}: {}", cmd_id, response);
+                    self.increment_sequence_id().await;
+                    return Ok(response);
+                }
+                Ok(Err(_)) => {
+                    // Channel closed — no point retrying
+                    self.pending.lock().await.remove(&cmd_id);
+                    return Err(RiscoError::ChannelClosed);
+                }
+                Err(_) => {
+                    // Timeout — clean up and maybe retry
+                    self.pending.lock().await.remove(&cmd_id);
+                    self.increment_sequence_id().await;
+                    if attempt == max_attempts {
+                        debug!("Command timeout after {} attempts: {} {}", max_attempts, cmd_id_str, command_str);
+                        return Err(RiscoError::CommandTimeout {
+                            command: command_str.to_string(),
+                        });
+                    }
+                    warn!("Command timeout (attempt {}/{}): {}", attempt, max_attempts, command_str);
+                }
+            }
         }
 
-        // Determine timeout
-        let timeout_duration = self.get_timeout().await;
-
-        debug!("Sending command: {}", command_str);
-
-        let (tx, rx) = oneshot::channel();
-        let cmd_id = {
-            let seq = self.sequence_id.lock().await;
-            let id = *seq;
-            // Register pending command
-            self.pending.lock().await.insert(id, tx);
-            id
-        };
-        let cmd_id_str = format!("{:02}", cmd_id);
-
-        // Encrypt and send
-        let encoded = {
-            let mut crypt = self.crypt.lock().await;
-            crypt.encode_command(command_str, &cmd_id_str, None)
-        };
-
-        {
-            let mut writer = self.writer.lock().await;
-            writer.write_all(&encoded).await.map_err(|e| {
-                error!("Failed to write command: {}", e);
-                RiscoError::Io(e)
-            })?;
-        }
-
-        debug!("Command sent (seq {})", cmd_id);
-
-        // Wait for response with timeout
-        match timeout(timeout_duration, rx).await {
-            Ok(Ok(response)) => {
-                debug!("Received response for seq {}: {}", cmd_id, response);
-                // Increment sequence ID
-                self.increment_sequence_id().await;
-                Ok(response)
-            }
-            Ok(Err(_)) => {
-                // Channel closed
-                self.pending.lock().await.remove(&cmd_id);
-                Err(RiscoError::ChannelClosed)
-            }
-            Err(_) => {
-                // Timeout
-                self.pending.lock().await.remove(&cmd_id);
-                debug!("Command timeout: {} {}", cmd_id_str, command_str);
-                Err(RiscoError::CommandTimeout {
-                    command: command_str.to_string(),
-                })
-            }
-        }
+        // Should not reach here, but just in case
+        Err(RiscoError::CommandTimeout {
+            command: command_str.to_string(),
+        })
     }
 
     /// Send an ACK for an unsolicited panel message.

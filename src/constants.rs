@@ -193,6 +193,7 @@ pub fn timezone_index_for_offset(offset: &str) -> Option<u8> {
 /// Panel hardware type identifiers returned by PNLCNF command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PanelHwType {
+    RW032,
     RW132,
     RW232,
     RW332,
@@ -202,7 +203,10 @@ pub enum PanelHwType {
 
 impl PanelHwType {
     pub fn from_name(s: &str) -> Option<Self> {
-        match s {
+        // Strip version suffix (e.g., "RW032:V2" -> "RW032")
+        let name = s.split(':').next().unwrap_or(s);
+        match name {
+            "RW032" => Some(Self::RW032),
             "RW132" => Some(Self::RW132),
             "RW232" => Some(Self::RW232),
             "RW332" => Some(Self::RW332),
@@ -214,11 +218,30 @@ impl PanelHwType {
 
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::RW032 => "RW032",
             Self::RW132 => "RW132",
             Self::RW232 => "RW232",
             Self::RW332 => "RW332",
             Self::RP432 => "RP432",
             Self::RP512 => "RP512",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_panel_hw_type_colon_stripping() {
+        assert_eq!(PanelHwType::from_name("RW032:V2"), Some(PanelHwType::RW032));
+        assert_eq!(PanelHwType::from_name("RP512:V3"), Some(PanelHwType::RP512));
+        assert_eq!(PanelHwType::from_name("RW132"), Some(PanelHwType::RW132));
+    }
+
+    #[test]
+    fn test_panel_hw_type_rw032() {
+        assert_eq!(PanelHwType::from_name("RW032"), Some(PanelHwType::RW032));
+        assert_eq!(PanelHwType::RW032.as_str(), "RW032");
     }
 }
