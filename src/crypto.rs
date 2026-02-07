@@ -2,7 +2,7 @@
 // Rust translation of lib/RCrypt.js
 
 use crate::constants::{CRC_TABLE, CRYPT, DLE, ETX, SEP, STX};
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// The result of decoding a message from the panel.
 #[derive(Debug, Clone)]
@@ -132,7 +132,7 @@ impl RiscoCrypt {
             }
             valid
         } else {
-            warn!("No separator found in message for CRC validation");
+            debug!("No separator found in message for CRC validation");
             false
         }
     }
