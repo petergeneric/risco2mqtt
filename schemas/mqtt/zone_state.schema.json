@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zone_state.schema.json",
+  "title": "Zone State",
+  "description": "Zone state within a snapshot message",
+  "type": "object",
+  "required": ["id", "name", "arm", "open", "bypass", "alarm", "tamper", "trouble"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "integer" },
+    "name": { "type": "string" },
+    "arm": { "type": "boolean" },
+    "open": { "type": "boolean" },
+    "bypass": { "type": "boolean" },
+    "alarm": { "type": "boolean" },
+    "tamper": { "type": "boolean" },
+    "trouble": { "type": "boolean" }
+  }
+}

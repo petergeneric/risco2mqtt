@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "message.schema.json",
+  "title": "MQTT Message",
+  "description": "Top-level union of all published message types, discriminated by the op field",
+  "oneOf": [
+    { "$ref": "snapshot.schema.json" },
+    { "$ref": "zone_event.schema.json" },
+    { "$ref": "partition_event.schema.json" },
+    { "$ref": "command_ack.schema.json" }
+  ]
+}

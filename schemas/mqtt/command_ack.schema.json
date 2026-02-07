@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "command_ack.schema.json",
+  "title": "Command Acknowledgement",
+  "description": "Published after processing an inbound command",
+  "type": "object",
+  "required": ["now", "op", "success"],
+  "additionalProperties": false,
+  "properties": {
+    "now": { "type": "integer" },
+    "op": { "const": "CMD_ACK" },
+    "success": { "type": "boolean" },
+    "src": { "type": "object" },
+    "data": {}
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "partition_event.schema.json",
+  "title": "Partition Event",
+  "description": "Event published when a partition status flag changes",
+  "type": "object",
+  "required": ["now", "op", "partition"],
+  "additionalProperties": false,
+  "properties": {
+    "now": { "type": "integer" },
+    "op": {
+      "type": "string",
+      "enum": [
+        "PART_ALARM",
+        "PART_ALARM_STANDBY",
+        "PART_DURESS_ALARM",
+        "PART_DURESS_FREE",
+        "PART_CODE_FALSE",
+        "PART_CODE_OK",
+        "PART_PANIC",
+        "PART_NO_PANIC",
+        "PART_ARMSTATE_ARMED",
+        "PART_ARMSTATE_DISARMED",
+        "PART_ARMSTATE_ARMED_HOME_STAY",
+        "PART_ARMSTATE_DISARMED_HOME_STAY",
+        "PART_READY",
+        "PART_NOT_READY",
+        "PART_TROUBLE",
+        "PART_TROUBLE_OK",
+        "PART_STATUS_CHANGE"
+      ]
+    },
+    "partition": { "type": "integer" },
+    "eventStr": { "type": "string" }
+  }
+}

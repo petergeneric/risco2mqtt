@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "command.schema.json",
+  "title": "Inbound Command",
+  "description": "Command received on the subscribe topic",
+  "type": "object",
+  "required": ["op"],
+  "additionalProperties": false,
+  "properties": {
+    "op": {
+      "type": "string",
+      "enum": [
+        "SNAPSHOT",
+        "PING",
+        "ARM_AWAY",
+        "ARM_HOME_STAY",
+        "DISARM",
+        "ZONE_BYPASS_ENABLE",
+        "ZONE_BYPASS_DISABLE"
+      ]
+    },
+    "op_id": { "type": "string" },
+    "zone": { "type": "integer" },
+    "partition": { "type": "integer" }
+  }
+}

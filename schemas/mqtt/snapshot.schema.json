@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "snapshot.schema.json",
+  "title": "Snapshot Message",
+  "description": "Retained snapshot of all zone and partition states",
+  "type": "object",
+  "required": ["now", "op", "state"],
+  "additionalProperties": false,
+  "properties": {
+    "now": { "type": "integer" },
+    "op": { "const": "SNAPSHOT" },
+    "state": {
+      "type": "object",
+      "required": ["parts", "zones"],
+      "additionalProperties": false,
+      "properties": {
+        "parts": {
+          "type": "array",
+          "items": { "$ref": "partition_state.schema.json" }
+        },
+        "zones": {
+          "type": "array",
+          "items": { "$ref": "zone_state.schema.json" }
+        }
+      }
+    }
+  }
+}

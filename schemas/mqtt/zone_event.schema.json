@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zone_event.schema.json",
+  "title": "Zone Event",
+  "description": "Event published when a zone status flag changes",
+  "type": "object",
+  "required": ["now", "op", "zone"],
+  "additionalProperties": false,
+  "properties": {
+    "now": { "type": "integer" },
+    "op": {
+      "type": "string",
+      "enum": [
+        "ZONE_OPEN",
+        "ZONE_CLOSE",
+        "ZONE_ARMED",
+        "ZONE_DISARMED",
+        "ZONE_ALARM",
+        "ZONE_STANDBY",
+        "ZONE_TAMPER",
+        "ZONE_HOLD",
+        "ZONE_TROUBLE",
+        "ZONE_BATTERY_LOW",
+        "ZONE_BATTERY_OK",
+        "ZONE_BYPASSED",
+        "ZONE_UNBYPASSED"
+      ]
+    },
+    "zone": { "type": "integer" }
+  }
+}

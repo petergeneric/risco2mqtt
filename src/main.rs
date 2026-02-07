@@ -141,81 +141,106 @@ fn build_panel_config(toml: &PanelToml) -> Result<PanelConfig> {
 // MQTT JSON types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct MqttMessage {
-    #[serde(rename = "type")]
-    msg_type: String,
-    timestamp: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    event: Option<MqttEvent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    snapshot: Option<MqttSnapshot>,
-}
-
-#[derive(Serialize)]
-struct MqttEvent {
-    kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    zone_id: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    zone_label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    partition_id: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    partition_label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    events_set: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    events_unset: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<serde_json::Value>,
-}
+// Published messages — all share {now, op, ...} flat structure
 
 #[derive(Serialize)]
 struct MqttSnapshot {
-    zones: Vec<MqttZone>,
-    partitions: Vec<MqttPartition>,
+    now: u64,
+    op: String,
+    state: MqttSnapshotState,
 }
 
 #[derive(Serialize)]
-struct MqttZone {
+struct MqttSnapshotState {
+    parts: Vec<MqttPartitionState>,
+    zones: Vec<MqttZoneState>,
+}
+
+#[derive(Serialize)]
+struct MqttZoneState {
     id: u32,
-    label: String,
+    name: String,
+    arm: bool,
     open: bool,
-    armed: bool,
+    bypass: bool,
     alarm: bool,
     tamper: bool,
     trouble: bool,
-    bypassed: bool,
 }
 
 #[derive(Serialize)]
-struct MqttPartition {
+struct MqttPartitionState {
     id: u32,
-    label: String,
-    armed: bool,
+    name: String,
+    #[serde(rename = "armAway")]
+    arm_away: bool,
+    #[serde(rename = "homeStay")]
     home_stay: bool,
-    ready: bool,
     open: bool,
+    ready: bool,
     alarm: bool,
+    duress: bool,
+    #[serde(rename = "falseCode")]
+    false_code: bool,
+    panic: bool,
     trouble: bool,
 }
 
+// Zone events: {now, op, zone}
+#[derive(Serialize)]
+struct MqttZoneEvent {
+    now: u64,
+    op: String,
+    zone: u32,
+}
+
+// Partition events: {now, op, partition} or {now, op, partition, eventStr}
+#[derive(Serialize)]
+struct MqttPartitionEvent {
+    now: u64,
+    op: String,
+    partition: u32,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "eventStr")]
+    event_str: Option<String>,
+}
+
+// CMD_ACK response
+#[derive(Serialize)]
+struct MqttCmdAck {
+    now: u64,
+    op: String,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    src: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<serde_json::Value>,
+}
+
+// Simple event with just {now, op}
+#[derive(Serialize)]
+struct MqttSimpleEvent {
+    now: u64,
+    op: String,
+}
+
+// Inbound command (subscribed)
 #[derive(Deserialize)]
 struct MqttCommand {
     op: String,
     #[serde(default)]
-    partition_id: Option<u32>,
+    op_id: Option<String>,
     #[serde(default)]
-    zone_id: Option<u32>,
+    zone: Option<u32>,
+    #[serde(default)]
+    partition: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn now_iso() -> String {
-    Utc::now().to_rfc3339()
+fn now_epoch_ms() -> u64 {
+    Utc::now().timestamp_millis() as u64
 }
 
 fn zone_label(zone_id: u32, panel_label: &str, overrides: &HashMap<u32, String>) -> String {
@@ -225,18 +250,65 @@ fn zone_label(zone_id: u32, panel_label: &str, overrides: &HashMap<u32, String>)
     panel_label.to_string()
 }
 
-async fn publish_event(client: &AsyncClient, topic: &str, event: MqttEvent) {
-    let msg = MqttMessage {
-        msg_type: "event".to_string(),
-        timestamp: now_iso(),
-        event: Some(event),
-        snapshot: None,
-    };
-    if let Ok(payload) = serde_json::to_string(&msg) {
-        if let Err(e) = client.publish(topic, QoS::AtLeastOnce, false, payload).await {
-            error!("Failed to publish event: {e}");
+async fn publish_json(client: &AsyncClient, topic: &str, payload: &impl Serialize, retain: bool) {
+    match serde_json::to_string(payload) {
+        Ok(json) => {
+            if let Err(e) = client.publish(topic, QoS::AtLeastOnce, retain, json).await {
+                error!("Failed to publish to {topic}: {e}");
+            }
         }
+        Err(e) => error!("Failed to serialize MQTT payload: {e}"),
     }
+}
+
+async fn publish_zone_event(client: &AsyncClient, topic: &str, op: &str, zone_id: u32) {
+    let msg = MqttZoneEvent {
+        now: now_epoch_ms(),
+        op: op.to_string(),
+        zone: zone_id,
+    };
+    publish_json(client, topic, &msg, false).await;
+}
+
+async fn publish_partition_event(
+    client: &AsyncClient,
+    topic: &str,
+    op: &str,
+    partition_id: u32,
+    event_str: Option<String>,
+) {
+    let msg = MqttPartitionEvent {
+        now: now_epoch_ms(),
+        op: op.to_string(),
+        partition: partition_id,
+        event_str,
+    };
+    publish_json(client, topic, &msg, false).await;
+}
+
+async fn publish_cmd_ack(
+    client: &AsyncClient,
+    topic: &str,
+    success: bool,
+    src: Option<serde_json::Value>,
+    data: Option<serde_json::Value>,
+) {
+    let msg = MqttCmdAck {
+        now: now_epoch_ms(),
+        op: "CMD_ACK".to_string(),
+        success,
+        src,
+        data,
+    };
+    publish_json(client, topic, &msg, false).await;
+}
+
+async fn publish_simple_event(client: &AsyncClient, topic: &str, op: &str) {
+    let msg = MqttSimpleEvent {
+        now: now_epoch_ms(),
+        op: op.to_string(),
+    };
+    publish_json(client, topic, &msg, false).await;
 }
 
 async fn build_snapshot(
@@ -246,37 +318,44 @@ async fn build_snapshot(
     let zones_data = panel.zones().await;
     let parts_data = panel.partitions().await;
 
-    let zones: Vec<MqttZone> = zones_data
+    let zones: Vec<MqttZoneState> = zones_data
         .iter()
         .filter(|z| !z.is_not_used())
-        .map(|z| MqttZone {
+        .map(|z| MqttZoneState {
             id: z.id,
-            label: zone_label(z.id, &z.label, zone_names),
+            name: zone_label(z.id, &z.label, zone_names),
+            arm: z.is_armed(),
             open: z.is_open(),
-            armed: z.is_armed(),
+            bypass: z.is_bypassed(),
             alarm: z.is_alarm(),
             tamper: z.is_tamper(),
             trouble: z.is_trouble(),
-            bypassed: z.is_bypassed(),
         })
         .collect();
 
-    let partitions: Vec<MqttPartition> = parts_data
+    let parts: Vec<MqttPartitionState> = parts_data
         .iter()
         .filter(|p| p.exists())
-        .map(|p| MqttPartition {
+        .map(|p| MqttPartitionState {
             id: p.id,
-            label: p.label.clone(),
-            armed: p.is_armed(),
+            name: p.label.clone(),
+            arm_away: p.is_armed(),
             home_stay: p.is_home_stay(),
-            ready: p.is_ready(),
             open: p.is_open(),
+            ready: p.is_ready(),
             alarm: p.is_alarm(),
+            duress: p.is_duress(),
+            false_code: p.is_false_code(),
+            panic: p.is_panic(),
             trouble: p.is_trouble(),
         })
         .collect();
 
-    MqttSnapshot { zones, partitions }
+    MqttSnapshot {
+        now: now_epoch_ms(),
+        op: "SNAPSHOT".to_string(),
+        state: MqttSnapshotState { parts, zones },
+    }
 }
 
 async fn publish_snapshot(
@@ -286,20 +365,7 @@ async fn publish_snapshot(
     zone_names: &HashMap<u32, String>,
 ) {
     let snapshot = build_snapshot(panel, zone_names).await;
-    let msg = MqttMessage {
-        msg_type: "snapshot".to_string(),
-        timestamp: now_iso(),
-        event: None,
-        snapshot: Some(snapshot),
-    };
-    match serde_json::to_string(&msg) {
-        Ok(payload) => {
-            if let Err(e) = client.publish(topic, QoS::AtLeastOnce, true, payload).await {
-                error!("Failed to publish snapshot: {e}");
-            }
-        }
-        Err(e) => error!("Failed to serialize snapshot: {e}"),
-    }
+    publish_json(client, topic, &snapshot, true).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,47 +392,69 @@ async fn handle_panel_event(
                 format!("Zone {zone_id}")
             };
 
-            let events_set: Vec<String> = ZoneStatusFlags::set_event_names(changed, new_status)
-                .into_iter()
-                .map(String::from)
-                .collect();
-            let events_unset: Vec<String> =
-                ZoneStatusFlags::unset_event_names(changed, new_status)
-                    .into_iter()
-                    .map(String::from)
-                    .collect();
+            let became_set = changed & new_status;
+            let became_unset = changed & !new_status;
 
-            let status = serde_json::json!({
-                "open": new_status.contains(ZoneStatusFlags::OPEN),
-                "armed": new_status.contains(ZoneStatusFlags::ARMED),
-                "alarm": new_status.contains(ZoneStatusFlags::ALARM),
-                "tamper": new_status.contains(ZoneStatusFlags::TAMPER),
-                "trouble": new_status.contains(ZoneStatusFlags::TROUBLE),
-                "bypassed": new_status.contains(ZoneStatusFlags::BYPASS),
-                "low_battery": new_status.contains(ZoneStatusFlags::LOW_BATTERY),
-                "lost": new_status.contains(ZoneStatusFlags::LOST),
-            });
+            info!("Zone {zone_id} ({label}) status changed");
 
-            info!(
-                "Zone {} ({}) changed: set={:?} unset={:?}",
-                zone_id, label, events_set, events_unset
-            );
+            // Publish individual zone events per changed flag
+            // Flags that became SET
+            if became_set.contains(ZoneStatusFlags::OPEN) {
+                publish_zone_event(client, topic, "ZONE_OPEN", zone_id).await;
+            }
+            if became_set.contains(ZoneStatusFlags::ARMED) {
+                publish_zone_event(client, topic, "ZONE_ARMED", zone_id).await;
+            }
+            if became_set.contains(ZoneStatusFlags::ALARM) {
+                publish_zone_event(client, topic, "ZONE_ALARM", zone_id).await;
+            }
+            if became_set.contains(ZoneStatusFlags::TAMPER) {
+                publish_zone_event(client, topic, "ZONE_TAMPER", zone_id).await;
+            }
+            if became_set.contains(ZoneStatusFlags::TROUBLE) {
+                publish_zone_event(client, topic, "ZONE_TROUBLE", zone_id).await;
+            }
+            if became_set.contains(ZoneStatusFlags::LOW_BATTERY) {
+                publish_zone_event(client, topic, "ZONE_BATTERY_LOW", zone_id).await;
+            }
+            if became_set.contains(ZoneStatusFlags::BYPASS) {
+                publish_zone_event(client, topic, "ZONE_BYPASSED", zone_id).await;
+            }
+            if became_set.contains(ZoneStatusFlags::LOST) {
+                info!("Zone {zone_id} ({label}): Lost (no JS equivalent)");
+            }
+            if became_set.contains(ZoneStatusFlags::COMM_TROUBLE) {
+                info!("Zone {zone_id} ({label}): CommTrouble (no JS equivalent)");
+            }
+            if became_set.contains(ZoneStatusFlags::SOAK_TEST) {
+                info!("Zone {zone_id} ({label}): SoakTest (no JS equivalent)");
+            }
+            if became_set.contains(ZoneStatusFlags::HOURS_24) {
+                info!("Zone {zone_id} ({label}): 24Hours (no JS equivalent)");
+            }
+            if became_set.contains(ZoneStatusFlags::NOT_USED) {
+                info!("Zone {zone_id} ({label}): NotUsed (no JS equivalent)");
+            }
 
-            publish_event(
-                client,
-                topic,
-                MqttEvent {
-                    kind: "zone_status".to_string(),
-                    zone_id: Some(zone_id),
-                    zone_label: Some(label),
-                    partition_id: None,
-                    partition_label: None,
-                    events_set: Some(events_set),
-                    events_unset: Some(events_unset),
-                    status: Some(status),
-                },
-            )
-            .await;
+            // Flags that became UNSET
+            if became_unset.contains(ZoneStatusFlags::OPEN) {
+                publish_zone_event(client, topic, "ZONE_CLOSE", zone_id).await;
+            }
+            if became_unset.contains(ZoneStatusFlags::ARMED) {
+                publish_zone_event(client, topic, "ZONE_DISARMED", zone_id).await;
+            }
+            if became_unset.contains(ZoneStatusFlags::ALARM) {
+                publish_zone_event(client, topic, "ZONE_STANDBY", zone_id).await;
+            }
+            if became_unset.contains(ZoneStatusFlags::TAMPER) {
+                publish_zone_event(client, topic, "ZONE_HOLD", zone_id).await;
+            }
+            if became_unset.contains(ZoneStatusFlags::LOW_BATTERY) {
+                publish_zone_event(client, topic, "ZONE_BATTERY_OK", zone_id).await;
+            }
+            if became_unset.contains(ZoneStatusFlags::BYPASS) {
+                publish_zone_event(client, topic, "ZONE_UNBYPASSED", zone_id).await;
+            }
         }
 
         PanelEvent::PartitionStatusChanged {
@@ -381,102 +469,94 @@ async fn handle_panel_event(
                 format!("Partition {partition_id}")
             };
 
-            let events_set: Vec<String> =
-                PartitionStatusFlags::set_event_names(changed, new_status)
-                    .into_iter()
-                    .map(String::from)
-                    .collect();
-            let events_unset: Vec<String> =
-                PartitionStatusFlags::unset_event_names(changed, new_status)
-                    .into_iter()
-                    .map(String::from)
-                    .collect();
+            let became_set = changed & new_status;
+            let became_unset = changed & !new_status;
 
-            let status = serde_json::json!({
-                "armed": new_status.contains(PartitionStatusFlags::ARMED),
-                "home_stay": new_status.contains(PartitionStatusFlags::HOME_STAY),
-                "ready": new_status.contains(PartitionStatusFlags::READY),
-                "open": new_status.contains(PartitionStatusFlags::OPEN),
-                "alarm": new_status.contains(PartitionStatusFlags::ALARM),
-                "trouble": new_status.contains(PartitionStatusFlags::TROUBLE),
-            });
+            // Build eventStr summary
+            let set_names: Vec<&str> =
+                PartitionStatusFlags::set_event_names(changed, new_status);
+            let unset_names: Vec<&str> =
+                PartitionStatusFlags::unset_event_names(changed, new_status);
+            let event_str = format!("set=[{}] unset=[{}]", set_names.join(","), unset_names.join(","));
 
-            info!(
-                "Partition {} ({}) changed: set={:?} unset={:?}",
-                partition_id, label, events_set, events_unset
-            );
+            info!("Partition {partition_id} ({label}) changed: {event_str}");
 
-            publish_event(
+            // Publish PART_STATUS_CHANGE with eventStr
+            publish_partition_event(
                 client,
                 topic,
-                MqttEvent {
-                    kind: "partition_status".to_string(),
-                    zone_id: None,
-                    zone_label: None,
-                    partition_id: Some(partition_id),
-                    partition_label: Some(label),
-                    events_set: Some(events_set),
-                    events_unset: Some(events_unset),
-                    status: Some(status),
-                },
+                "PART_STATUS_CHANGE",
+                partition_id,
+                Some(event_str),
             )
             .await;
+
+            // Publish individual partition events per changed flag
+            // Flags that became SET
+            if became_set.contains(PartitionStatusFlags::ALARM) {
+                publish_partition_event(client, topic, "PART_ALARM", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::DURESS) {
+                publish_partition_event(client, topic, "PART_DURESS_ALARM", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::FALSE_CODE) {
+                publish_partition_event(client, topic, "PART_CODE_FALSE", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::PANIC) {
+                publish_partition_event(client, topic, "PART_PANIC", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_ARMED", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::HOME_STAY) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_ARMED_HOME_STAY", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::READY) {
+                publish_partition_event(client, topic, "PART_READY", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::TROUBLE) {
+                publish_partition_event(client, topic, "PART_TROUBLE", partition_id, None).await;
+            }
+
+            // Flags that became UNSET
+            if became_unset.contains(PartitionStatusFlags::ALARM) {
+                publish_partition_event(client, topic, "PART_ALARM_STANDBY", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::DURESS) {
+                publish_partition_event(client, topic, "PART_DURESS_FREE", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::FALSE_CODE) {
+                publish_partition_event(client, topic, "PART_CODE_OK", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::PANIC) {
+                publish_partition_event(client, topic, "PART_NO_PANIC", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_DISARMED", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::HOME_STAY) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_DISARMED_HOME_STAY", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::READY) {
+                publish_partition_event(client, topic, "PART_NOT_READY", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::TROUBLE) {
+                publish_partition_event(client, topic, "PART_TROUBLE_OK", partition_id, None).await;
+            }
         }
 
         PanelEvent::SystemStatusChanged { .. } => {
-            publish_event(
-                client,
-                topic,
-                MqttEvent {
-                    kind: "system_status".to_string(),
-                    zone_id: None,
-                    zone_label: None,
-                    partition_id: None,
-                    partition_label: None,
-                    events_set: None,
-                    events_unset: None,
-                    status: None,
-                },
-            )
-            .await;
+            publish_simple_event(client, topic, "SYSTEM_STATUS").await;
         }
 
         PanelEvent::Connected => {
             info!("Panel connected");
-            publish_event(
-                client,
-                topic,
-                MqttEvent {
-                    kind: "connected".to_string(),
-                    zone_id: None,
-                    zone_label: None,
-                    partition_id: None,
-                    partition_label: None,
-                    events_set: None,
-                    events_unset: None,
-                    status: None,
-                },
-            )
-            .await;
+            publish_simple_event(client, topic, "CONNECTED").await;
         }
 
         PanelEvent::Disconnected => {
             warn!("Panel disconnected");
-            publish_event(
-                client,
-                topic,
-                MqttEvent {
-                    kind: "disconnected".to_string(),
-                    zone_id: None,
-                    zone_label: None,
-                    partition_id: None,
-                    partition_label: None,
-                    events_set: None,
-                    events_unset: None,
-                    status: None,
-                },
-            )
-            .await;
+            publish_simple_event(client, topic, "DISCONNECTED").await;
         }
 
         PanelEvent::SystemInitComplete => {
@@ -493,72 +573,96 @@ async fn handle_panel_event(
 // ---------------------------------------------------------------------------
 
 async fn handle_command(
+    payload_str: &str,
     cmd: MqttCommand,
     client: &AsyncClient,
     topic: &str,
     panel: &RiscoPanel,
     zone_names: &HashMap<u32, String>,
 ) {
+    // Parse the raw payload as a JSON value for the CMD_ACK src field
+    let src_json = serde_json::from_str::<serde_json::Value>(payload_str).ok();
+
     match cmd.op.as_str() {
         "SNAPSHOT" => {
             info!("Command: SNAPSHOT");
+            let snapshot = build_snapshot(panel, zone_names).await;
+            let snapshot_value = serde_json::to_value(&snapshot).ok();
             publish_snapshot(client, topic, panel, zone_names).await;
+            publish_cmd_ack(client, topic, true, src_json, snapshot_value).await;
         }
 
         "PING" => {
             info!("Command: PING");
-            publish_event(
-                client,
-                topic,
-                MqttEvent {
-                    kind: "pong".to_string(),
-                    zone_id: None,
-                    zone_label: None,
-                    partition_id: None,
-                    partition_label: None,
-                    events_set: None,
-                    events_unset: None,
-                    status: None,
-                },
-            )
-            .await;
+            publish_cmd_ack(client, topic, true, src_json, None).await;
         }
 
         "ARM_AWAY" => {
-            let id = cmd.partition_id.unwrap_or(1);
+            let id = cmd.partition.unwrap_or(1);
             info!("Command: ARM_AWAY partition {id}");
-            match panel.arm_partition(id, ArmType::Away).await {
-                Ok(true) => info!("ARM_AWAY partition {id}: success"),
-                Ok(false) => warn!("ARM_AWAY partition {id}: panel returned NACK"),
-                Err(e) => error!("ARM_AWAY partition {id} failed: {e}"),
-            }
+            let success = match panel.arm_partition(id, ArmType::Away).await {
+                Ok(true) => {
+                    info!("ARM_AWAY partition {id}: success");
+                    true
+                }
+                Ok(false) => {
+                    warn!("ARM_AWAY partition {id}: panel returned NACK");
+                    false
+                }
+                Err(e) => {
+                    error!("ARM_AWAY partition {id} failed: {e}");
+                    false
+                }
+            };
+            publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
         "ARM_HOME_STAY" => {
-            let id = cmd.partition_id.unwrap_or(1);
+            let id = cmd.partition.unwrap_or(1);
             info!("Command: ARM_HOME_STAY partition {id}");
-            match panel.arm_partition(id, ArmType::Stay).await {
-                Ok(true) => info!("ARM_HOME_STAY partition {id}: success"),
-                Ok(false) => warn!("ARM_HOME_STAY partition {id}: panel returned NACK"),
-                Err(e) => error!("ARM_HOME_STAY partition {id} failed: {e}"),
-            }
+            let success = match panel.arm_partition(id, ArmType::Stay).await {
+                Ok(true) => {
+                    info!("ARM_HOME_STAY partition {id}: success");
+                    true
+                }
+                Ok(false) => {
+                    warn!("ARM_HOME_STAY partition {id}: panel returned NACK");
+                    false
+                }
+                Err(e) => {
+                    error!("ARM_HOME_STAY partition {id} failed: {e}");
+                    false
+                }
+            };
+            publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
         "DISARM" => {
-            let id = cmd.partition_id.unwrap_or(1);
+            let id = cmd.partition.unwrap_or(1);
             info!("Command: DISARM partition {id}");
-            match panel.disarm_partition(id).await {
-                Ok(true) => info!("DISARM partition {id}: success"),
-                Ok(false) => warn!("DISARM partition {id}: panel returned NACK"),
-                Err(e) => error!("DISARM partition {id} failed: {e}"),
-            }
+            let success = match panel.disarm_partition(id).await {
+                Ok(true) => {
+                    info!("DISARM partition {id}: success");
+                    true
+                }
+                Ok(false) => {
+                    warn!("DISARM partition {id}: panel returned NACK");
+                    false
+                }
+                Err(e) => {
+                    error!("DISARM partition {id} failed: {e}");
+                    false
+                }
+            };
+            publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
         "ZONE_BYPASS_ENABLE" => {
-            let id = match cmd.zone_id {
+            let id = match cmd.zone {
                 Some(id) => id,
                 None => {
-                    warn!("ZONE_BYPASS_ENABLE: missing zone_id");
+                    warn!("ZONE_BYPASS_ENABLE: missing zone");
+                    publish_cmd_ack(client, topic, false, src_json, None).await;
                     return;
                 }
             };
@@ -566,21 +670,33 @@ async fn handle_command(
             if let Some(z) = panel.zone(id).await {
                 if z.is_bypassed() {
                     info!("Zone {id} already bypassed");
+                    publish_cmd_ack(client, topic, true, src_json, None).await;
                     return;
                 }
             }
-            match panel.toggle_bypass_zone(id).await {
-                Ok(true) => info!("ZONE_BYPASS_ENABLE zone {id}: success"),
-                Ok(false) => warn!("ZONE_BYPASS_ENABLE zone {id}: panel returned NACK"),
-                Err(e) => error!("ZONE_BYPASS_ENABLE zone {id} failed: {e}"),
-            }
+            let success = match panel.toggle_bypass_zone(id).await {
+                Ok(true) => {
+                    info!("ZONE_BYPASS_ENABLE zone {id}: success");
+                    true
+                }
+                Ok(false) => {
+                    warn!("ZONE_BYPASS_ENABLE zone {id}: panel returned NACK");
+                    false
+                }
+                Err(e) => {
+                    error!("ZONE_BYPASS_ENABLE zone {id} failed: {e}");
+                    false
+                }
+            };
+            publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
         "ZONE_BYPASS_DISABLE" => {
-            let id = match cmd.zone_id {
+            let id = match cmd.zone {
                 Some(id) => id,
                 None => {
-                    warn!("ZONE_BYPASS_DISABLE: missing zone_id");
+                    warn!("ZONE_BYPASS_DISABLE: missing zone");
+                    publish_cmd_ack(client, topic, false, src_json, None).await;
                     return;
                 }
             };
@@ -588,18 +704,30 @@ async fn handle_command(
             if let Some(z) = panel.zone(id).await {
                 if !z.is_bypassed() {
                     info!("Zone {id} already not bypassed");
+                    publish_cmd_ack(client, topic, true, src_json, None).await;
                     return;
                 }
             }
-            match panel.toggle_bypass_zone(id).await {
-                Ok(true) => info!("ZONE_BYPASS_DISABLE zone {id}: success"),
-                Ok(false) => warn!("ZONE_BYPASS_DISABLE zone {id}: panel returned NACK"),
-                Err(e) => error!("ZONE_BYPASS_DISABLE zone {id} failed: {e}"),
-            }
+            let success = match panel.toggle_bypass_zone(id).await {
+                Ok(true) => {
+                    info!("ZONE_BYPASS_DISABLE zone {id}: success");
+                    true
+                }
+                Ok(false) => {
+                    warn!("ZONE_BYPASS_DISABLE zone {id}: panel returned NACK");
+                    false
+                }
+                Err(e) => {
+                    error!("ZONE_BYPASS_DISABLE zone {id} failed: {e}");
+                    false
+                }
+            };
+            publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
         other => {
             warn!("Unknown command: {other}");
+            publish_cmd_ack(client, topic, false, src_json, None).await;
         }
     }
 }
@@ -701,6 +829,7 @@ async fn main() -> Result<()> {
                             Ok(cmd) => {
                                 let panel_lock = panel_cmds.lock().await;
                                 handle_command(
+                                    &payload,
                                     cmd,
                                     &client_cmds,
                                     &topic_cmds,

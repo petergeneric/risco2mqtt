@@ -178,6 +178,9 @@ impl Partition {
     pub fn is_open(&self) -> bool { self.status.contains(PartitionStatusFlags::OPEN) }
     pub fn exists(&self) -> bool { self.status.contains(PartitionStatusFlags::EXISTS) }
     pub fn is_trouble(&self) -> bool { self.status.contains(PartitionStatusFlags::TROUBLE) }
+    pub fn is_duress(&self) -> bool { self.status.contains(PartitionStatusFlags::DURESS) }
+    pub fn is_false_code(&self) -> bool { self.status.contains(PartitionStatusFlags::FALSE_CODE) }
+    pub fn is_panic(&self) -> bool { self.status.contains(PartitionStatusFlags::PANIC) }
 }
 
 #[cfg(test)]

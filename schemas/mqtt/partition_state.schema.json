@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "partition_state.schema.json",
+  "title": "Partition State",
+  "description": "Partition state within a snapshot message",
+  "type": "object",
+  "required": ["id", "name", "armAway", "homeStay", "open", "ready", "alarm", "duress", "falseCode", "panic", "trouble"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "integer" },
+    "name": { "type": "string" },
+    "armAway": { "type": "boolean" },
+    "homeStay": { "type": "boolean" },
+    "open": { "type": "boolean" },
+    "ready": { "type": "boolean" },
+    "alarm": { "type": "boolean" },
+    "duress": { "type": "boolean" },
+    "falseCode": { "type": "boolean" },
+    "panic": { "type": "boolean" },
+    "trouble": { "type": "boolean" }
+  }
+}
