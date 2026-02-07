@@ -38,8 +38,23 @@ struct Cli {
 struct Config {
     panel: PanelToml,
     mqtt: MqttToml,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_zone_names")]
     zone_names: HashMap<u32, String>,
+}
+
+fn deserialize_zone_names<'de, D>(deserializer: D) -> Result<HashMap<u32, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let string_map: HashMap<String, String> = HashMap::deserialize(deserializer)?;
+    string_map
+        .into_iter()
+        .map(|(k, v)| {
+            k.parse::<u32>()
+                .map(|id| (id, v))
+                .map_err(|_| serde::de::Error::custom(format!("invalid zone ID: {k}")))
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
