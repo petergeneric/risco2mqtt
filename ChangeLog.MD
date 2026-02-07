@@ -1,6 +1,9 @@
 # Change Log
 
 All notable changes to this project will be documented in this file.
+## 0.20.0 (2026-02-07)
+* Rewrite in Rust
+* Introduce risco2mqtt harness to allow high-level operations against the panel via message queue
 
 ## 0.10.5 (2021-28-11)
 * Merge Pull Requests from Monofin (#12 - Add a 10 second delay between socket connect and RMT command.)
