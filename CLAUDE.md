@@ -4,56 +4,74 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-risco-lan-bridge is a Node.js library for direct TCP/IP communication with Risco alarm control panels (Agility, WiComm, WiCommPro, LightSYS, ProsysPlus, GTPlus). It acts as a bridge between applications and Risco panels, bypassing the RiscoCloud service. No external npm dependencies — uses only Node.js built-in modules (`net`, `events`).
+risco-lan-bridge is a Rust library (with legacy Node.js code) for direct TCP/IP communication with Risco alarm control panels (Agility, WiComm, WiCommPro, LightSYS, ProsysPlus, GTPlus), bypassing the RiscoCloud service. The Rust rewrite includes `risco2mqtt`, an MQTT bridge binary.
 
 ## Commands
 
-There is no build step (pure JavaScript) and no test suite configured. The entry point is `index.js` which re-exports `lib/RiscoPanel.js`.
-
 ```bash
-npm install          # install (no deps, but sets up node_modules)
-node examples/Full_Options.js  # run an example (requires a real panel)
+# Rust (primary)
+cargo build                          # debug build
+cargo build --release                # release build
+cargo test                           # run all tests
+cargo test <test_name>               # run a single test
+cargo clippy                         # lint
+cargo check                          # quick type check
+cargo run -- --config config.toml    # run risco2mqtt bridge
+
+# Node.js (legacy, no build step)
+npm install
+npm test                             # runs node test/run-tests.js
 ```
 
 ## Architecture
 
-The library follows a layered event-driven architecture:
+The Rust library (`src/`) mirrors the original Node.js architecture (`lib/`) as a layered async system built on tokio:
 
 ```
-RiscoPanel (lib/RiscoPanel.js)
-  → RiscoComm (lib/RiscoComm.js)
-    → Socket Layer (lib/RiscoChannels.js)
-      → RCrypt (lib/RCrypt.js)
-    → Device Models (lib/Devices/)
+risco2mqtt (src/main.rs) — MQTT bridge binary
+  └── RiscoPanel (src/panel.rs) — public API
+        ├── RiscoComm (src/comm.rs) — connection init, device fetch, panel verification
+        │     ├── Transport (src/transport/)
+        │     │     ├── DirectTcpTransport (direct.rs) — TCP to panel port 1000
+        │     │     ├── ProxyTcpTransport (proxy.rs) — middleman to RiscoCloud
+        │     │     ├── CommandEngine (command.rs) — send/retry, sequence IDs 1-49
+        │     │     └── Discovery (discovery.rs) — panel ID brute-force 9999→0
+        │     └── RiscoCrypt (src/crypto.rs) — LFSR XOR cipher, CRC16, DLE escaping
+        ├── Device collections: Vec<Zone>, Vec<Partition>, Vec<Output>, Option<MBSystem>
+        │     └── (src/devices/) — each with bitflags-based status tracking
+        ├── EventChannel (src/event.rs) — tokio broadcast for PanelEvent
+        ├── Watchdog task — sends CLOCK every 5s
+        └── DataListener task — handles unsolicited status updates (seq ID 50+)
 ```
 
-**RiscoPanel.js** — Top-level controller. Contains a base `RiscoPanel` class and 6 subclasses (one per panel type: `Agility`, `WiComm`, `WiCommPro`, `LightSys`, `ProsysPlus`, `GTPlus`). Each subclass defines panel-specific limits (max zones, partitions, outputs). Exposes `Connect()`, `Disconnect()`, `ArmPart()`, `DisarmPart()`, `ToggleBypassZone()`, `ToggleOutput()`. Runs a 5-second watchdog keep-alive.
+**Key Rust modules:**
+- `config.rs` — `PanelConfig` builder, `PanelType` enum (6 variants), `ArmType`, `SocketMode`
+- `protocol.rs` — message parsing, status update routing
+- `error.rs` — `RiscoError` enum with `thiserror`
+- `constants.rs` — CRC lookup table, protocol bytes (STX=0x02, ETX=0x03, DLE=0x10, CRC_MARKER=0x17)
 
-**RiscoComm.js** — Communication handler. Manages connection initialization sequence, panel type verification, firmware version detection, and data fetching (zones, partitions, outputs, system). Emits events when device states change from panel updates.
-
-**RiscoChannels.js** — TCP socket layer with two modes:
-- `Risco_DirectTCP_Socket` — Direct TCP connection to the panel (default port 1000). Authenticates with RMT command after a mandatory 10-second delay post-connect.
-- `Risco_ProxyTCP_Socket` — Acts as middleman between the panel and RiscoCloud (www.riscocloud.com:33000), allowing simultaneous local and cloud access.
-- Both extend `Risco_Base_Socket` which handles command send/retry, CRC validation, and encryption key discovery.
-
-**RCrypt.js** — Implements the proprietary Risco encryption protocol. Uses Panel ID (0001-9999) to generate an XOR cipher. Handles CRC16 checksums and escape character encoding (STX/ETX/DLE).
-
-**lib/Devices/** — Device model classes (`Zones.js`, `Partitions.js`, `Outputs.js`, `System.js`). Each extends Array, tracks real-time state via property setters, and emits change events.
-
-**constants.js** — Enums for zone types, CRC lookup table, and protocol constants.
+**Legacy Node.js** (`lib/`): Same layered design using EventEmitter. `RiscoPanel.js` has a base class with 6 subclasses. Device models extend Array. Zero npm dependencies.
 
 ## Protocol Notes
 
 - Message format: `[STX][ENC?][CMDID][DATA][CRC_MARKER][CRC][ETX]`
-- Commands: `RMT=<password>` (auth), `LCL` (local encrypted session), `ARM=<id>`, `STAY=<id>`, `DISARM=<id>`, `ZBYPAS=<id>`, `CLOCK` (keep-alive)
-- Panel ID brute-force discovery goes from 9999 down to 0 when `DiscoverCode` is enabled
+- Commands: `RMT=<password>` (auth), `LCL` (encrypted session), `ARM=<id>`, `STAY=<id>`, `DISARM=<id>`, `ZBYPAS=<id>`, `ACTUO<id>` (output), `CLOCK` (keep-alive), `PNLCNF` (panel type query)
+- Mandatory 10-second delay after TCP connect before sending RMT auth
+- Panel ID discovery brute-forces 9999→0 when enabled
 - Mono-socket panels (IPC/RW132IP) require disabling RiscoCloud for direct connection
+- Command sequence IDs cycle 1-49; unsolicited panel messages use 50+
+- Connection retry uses exponential backoff: `base_delay * 2^min(attempt-1, 4)`
 
-## Key Events
+## MQTT Bridge (risco2mqtt)
 
-All classes use Node.js EventEmitter. Main events to know:
-- `SystemInitComplete` — All devices discovered, panel ready
-- `PanelCommReady` — Communication layer established
-- `NewZoneStatusFromPanel` / `NewOutputStatusFromPanel` / `NewPartitionStatusFromPanel` — Device state changes from panel
-- `Disconnected`, `PanelConnected` — Socket lifecycle
-- `BadCode`, `BadCryptKey` — Trigger auto-discovery when enabled
+The binary in `src/main.rs` reads `config.toml` (see `config.toml.example`), connects to both the Risco panel and an MQTT broker, and bridges events bidirectionally. JSON schemas for MQTT messages are in `schemas/mqtt/`.
+
+## Key Events (PanelEvent enum in Rust)
+
+- `ZoneStatus` / `PartitionStatus` / `OutputStatus` / `SystemStatus` — device state changes
+- `SystemInitComplete` — all devices discovered, panel ready
+- `Connected` / `Disconnected` — socket lifecycle
+
+## Panel Type Limits
+
+Panel types define max zones/partitions/outputs. LightSYS and ProsysPlus limits are firmware-dependent (e.g., LightSYS FW >= 3.0 gets 50 zones/32 outputs vs 32/14; ProsysPlus FW >= 1.2.0.7 gets 128 zones vs 64).
