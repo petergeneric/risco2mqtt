@@ -66,6 +66,21 @@ impl RiscoComm {
             }
         }
 
+        // Propagate any discovered panel ID from the crypto engine back into
+        // the config so it persists across reconnection attempts.
+        if let Ok(engine) = self.engine() {
+            let crypt_arc = engine.crypt();
+            let crypt = crypt_arc.lock().await;
+            let actual_panel_id = crypt.panel_id();
+            if actual_panel_id != self.config.panel_id {
+                info!(
+                    "Panel ID updated via discovery: {} -> {}",
+                    self.config.panel_id, actual_panel_id
+                );
+                self.config.panel_id = actual_panel_id;
+            }
+        }
+
         // Panel connected — verify type and configure
         self.verify_panel_type().await?;
         self.get_firmware_version().await?;
@@ -605,6 +620,15 @@ impl RiscoComm {
 
     pub fn firmware_version(&self) -> Option<&str> {
         self.firmware_version.as_deref()
+    }
+
+    /// Get the current (potentially updated) panel configuration.
+    ///
+    /// The config may have been updated during connection if:
+    /// - Panel type was auto-detected via `verify_panel_type`
+    /// - Panel ID was discovered via brute-force discovery
+    pub fn config(&self) -> &PanelConfig {
+        &self.config
     }
 }
 

@@ -17,6 +17,21 @@ use crate::error::{RiscoError, Result};
 use crate::event::{event_channel, EventReceiver, EventSender, PanelEvent};
 use crate::protocol::parse_status_update;
 
+/// Cached device data from a previous successful discovery.
+///
+/// When a connection drops and is retried, this allows skipping the
+/// expensive device re-discovery phase (which queries every zone,
+/// partition, output, and system device individually). The cached
+/// devices are populated into the new panel and will be kept in sync
+/// via unsolicited status updates from the panel.
+#[derive(Clone)]
+struct CachedDevices {
+    zones: Vec<Zone>,
+    partitions: Vec<Partition>,
+    outputs: Vec<Output>,
+    system: Option<MBSystem>,
+}
+
 /// The main public API for interacting with a Risco alarm panel.
 ///
 /// # Example
@@ -83,7 +98,7 @@ impl RiscoPanel {
     pub async fn connect(config: PanelConfig) -> Result<Self> {
         let max_retries = config.max_connect_retries;
         let base_delay_ms = config.reconnect_delay_ms;
-
+        let mut config = config; // Make mutable for memorizing discovered values
         let mut last_error = None;
 
         for attempt in 0..=max_retries {
@@ -97,8 +112,29 @@ impl RiscoPanel {
                 sleep(Duration::from_millis(delay_ms)).await;
             }
 
-            match Self::try_connect(config.clone()).await {
-                Ok(panel) => return Ok(panel),
+            match Self::try_connect(config.clone(), None).await {
+                Ok(panel) => {
+                    // Memorize any discovered values for future reconnections.
+                    // RiscoComm may have updated panel_id (via discovery) or
+                    // panel_type (via verify_panel_type) during connection.
+                    let updated_config = panel.comm.config();
+                    if updated_config.panel_id != config.panel_id {
+                        info!(
+                            "Memorizing discovered panel ID: {}",
+                            updated_config.panel_id
+                        );
+                        config.panel_id = updated_config.panel_id;
+                    }
+                    if updated_config.panel_type != config.panel_type {
+                        info!(
+                            "Memorizing discovered panel type: {:?}",
+                            updated_config.panel_type
+                        );
+                        config.panel_type = updated_config.panel_type;
+                    }
+
+                    return Ok(panel);
+                }
                 Err(e) => {
                     if !e.is_retryable() || attempt == max_retries {
                         return Err(e);
@@ -113,7 +149,14 @@ impl RiscoPanel {
     }
 
     /// Single connection attempt without retries.
-    async fn try_connect(config: PanelConfig) -> Result<Self> {
+    ///
+    /// If `cached_devices` is provided, device discovery is skipped and the
+    /// cached data is used instead. This avoids the expensive re-discovery
+    /// phase on reconnection when devices have already been discovered.
+    async fn try_connect(
+        config: PanelConfig,
+        cached_devices: Option<CachedDevices>,
+    ) -> Result<Self> {
         let (event_tx, _event_rx) = event_channel(256);
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -122,10 +165,25 @@ impl RiscoPanel {
         let mut comm = RiscoComm::new(config, event_tx.clone());
         comm.connect().await?;
 
-        let zones = Arc::new(RwLock::new(Vec::new()));
-        let partitions = Arc::new(RwLock::new(Vec::new()));
-        let outputs = Arc::new(RwLock::new(Vec::new()));
-        let system = Arc::new(RwLock::new(None));
+        let zones;
+        let partitions;
+        let outputs;
+        let system;
+
+        if let Some(cached) = cached_devices {
+            // Reuse previously discovered devices instead of re-querying
+            info!("Skipping device discovery, using cached devices ({} zones, {} partitions, {} outputs)",
+                cached.zones.len(), cached.partitions.len(), cached.outputs.len());
+            zones = Arc::new(RwLock::new(cached.zones));
+            partitions = Arc::new(RwLock::new(cached.partitions));
+            outputs = Arc::new(RwLock::new(cached.outputs));
+            system = Arc::new(RwLock::new(cached.system));
+        } else {
+            zones = Arc::new(RwLock::new(Vec::new()));
+            partitions = Arc::new(RwLock::new(Vec::new()));
+            outputs = Arc::new(RwLock::new(Vec::new()));
+            system = Arc::new(RwLock::new(None));
+        }
 
         let mut panel = Self {
             comm,
@@ -141,7 +199,8 @@ impl RiscoPanel {
             watchdog_interval_ms,
         };
 
-        if auto_discover {
+        // Only run discovery if auto_discover is enabled and no cached devices
+        if auto_discover && !panel.has_discovered_devices().await {
             panel.discover_devices().await?;
         }
 
@@ -153,6 +212,87 @@ impl RiscoPanel {
         info!("System initialization completed");
 
         Ok(panel)
+    }
+
+    /// Reconnect to a panel, reusing previously discovered devices.
+    ///
+    /// This is intended for use in external reconnection loops (e.g., in
+    /// main.rs). After a connection drops, the caller can extract the device
+    /// snapshots from the old panel and pass them here to skip the expensive
+    /// device re-discovery phase on reconnection.
+    ///
+    /// # Arguments
+    /// * `config` - The panel configuration (ideally with memorized panel_id/type
+    ///   from a previous successful connection).
+    /// * `zones` - Previously discovered zones.
+    /// * `partitions` - Previously discovered partitions.
+    /// * `outputs` - Previously discovered outputs.
+    /// * `system` - Previously discovered system status.
+    pub async fn reconnect(
+        config: PanelConfig,
+        zones: Vec<Zone>,
+        partitions: Vec<Partition>,
+        outputs: Vec<Output>,
+        system: Option<MBSystem>,
+    ) -> Result<Self> {
+        let max_retries = config.max_connect_retries;
+        let base_delay_ms = config.reconnect_delay_ms;
+        let mut config = config;
+        let mut last_error = None;
+        let cached = CachedDevices {
+            zones,
+            partitions,
+            outputs,
+            system,
+        };
+
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                let delay_ms = base_delay_ms * (1 << (attempt - 1).min(4));
+                warn!(
+                    "Reconnection attempt {} failed, retrying in {:.1}s...",
+                    attempt,
+                    delay_ms as f64 / 1000.0
+                );
+                sleep(Duration::from_millis(delay_ms)).await;
+            }
+
+            match Self::try_connect(config.clone(), Some(cached.clone())).await {
+                Ok(panel) => {
+                    let updated_config = panel.comm.config();
+                    if updated_config.panel_id != config.panel_id {
+                        info!(
+                            "Memorizing discovered panel ID: {}",
+                            updated_config.panel_id
+                        );
+                        config.panel_id = updated_config.panel_id;
+                    }
+                    if updated_config.panel_type != config.panel_type {
+                        info!(
+                            "Memorizing discovered panel type: {:?}",
+                            updated_config.panel_type
+                        );
+                        config.panel_type = updated_config.panel_type;
+                    }
+                    return Ok(panel);
+                }
+                Err(e) => {
+                    if !e.is_retryable() || attempt == max_retries {
+                        return Err(e);
+                    }
+                    warn!("Reconnection error (attempt {}): {}", attempt + 1, e);
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(RiscoError::Disconnected))
+    }
+
+    /// Check whether devices have already been discovered (i.e. at least
+    /// zones or partitions are populated, indicating cached data was loaded).
+    async fn has_discovered_devices(&self) -> bool {
+        !self.zones.read().await.is_empty() || !self.partitions.read().await.is_empty()
     }
 
     /// Subscribe to panel events.
