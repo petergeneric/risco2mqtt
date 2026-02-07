@@ -24,7 +24,7 @@
     "url": "https://github.com/TJForc/risco-lan-bridge/issues"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node test/run-tests.js"
   },
   "keywords": [
     "risco",
