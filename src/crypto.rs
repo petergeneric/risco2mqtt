@@ -236,21 +236,16 @@ impl RiscoCrypt {
                     && i + 1 < end
                     && (data[i + 1] == STX || data[i + 1] == ETX || data[i + 1] == DLE)
                 {
+                    // DLE escape prefix: skip the DLE byte, account for offset shift
                     offset += 1;
-                } else {
-                    let decrypted = data[i] ^ self.pseudo_buffer[self.crypt_pos - offset];
-                    if data[i] != DLE {
-                        result.push(decrypted);
-                    }
+                    self.crypt_pos += 1;
+                    i += 1;
+                    // Fall through to decrypt the escaped byte below
                 }
-            }
-
-            if !use_crypt && data[i] != DLE {
+                let decrypted = data[i] ^ self.pseudo_buffer[self.crypt_pos - offset];
+                result.push(decrypted);
+            } else if data[i] != DLE {
                 result.push(data[i]);
-            }
-
-            if data[i] != DLE || !use_crypt {
-                // Only skip DLE bytes in non-crypt mode for output
             }
 
             self.crypt_pos += 1;
@@ -451,6 +446,44 @@ mod tests {
             assert_eq!(decoded.command, "ACK", "Failed for panel_id {}", panel_id);
             assert!(decoded.crc_valid, "CRC failed for panel_id {}", panel_id);
         }
+    }
+
+    #[test]
+    fn test_encode_decode_all_panel_ids() {
+        // Exhaustive roundtrip test for all 10,000 panel IDs.
+        // This catches DLE+DLE escape bugs: some panel IDs produce encrypted
+        // bytes equal to DLE (0x10), which must be DLE-escaped on the wire
+        // and correctly recovered during decryption.
+        let mut dle_dle_count = 0;
+        for panel_id in 0..=9999u16 {
+            let mut crypt = RiscoCrypt::new(panel_id);
+            crypt.set_crypt_enabled(true);
+
+            let encoded = crypt.encode_command("CUSTLST?", "01", None);
+
+            // Track how many panel IDs produce DLE+DLE escapes
+            for w in encoded.windows(2) {
+                if w[0] == DLE && w[1] == DLE {
+                    dle_dle_count += 1;
+                    break;
+                }
+            }
+
+            let decoded = crypt.decode_message(&encoded);
+
+            assert_eq!(decoded.cmd_id, "01", "cmd_id wrong for panel_id {}", panel_id);
+            assert_eq!(
+                decoded.command, "CUSTLST?",
+                "command wrong for panel_id {}",
+                panel_id
+            );
+            assert!(decoded.crc_valid, "CRC failed for panel_id {}", panel_id);
+        }
+        // Sanity: at least some panel IDs should produce DLE+DLE escapes
+        assert!(
+            dle_dle_count > 0,
+            "Expected some panel IDs to produce DLE+DLE escapes"
+        );
     }
 
     #[test]
