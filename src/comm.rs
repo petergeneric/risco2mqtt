@@ -406,7 +406,7 @@ impl RiscoComm {
                         output.output_type = OutputType::from_value(type_num);
 
                         // Query pulse delay for pulsed outputs
-                        if type_num.is_multiple_of(2) {
+                        if type_num % 2 == 0 {
                             let pulse_resp = self
                                 .send_command(&format!("OPULSE{}?", min as usize + j), false)
                                 .await;
