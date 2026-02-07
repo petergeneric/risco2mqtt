@@ -11,7 +11,7 @@ use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use risco_lan_bridge::{
     ArmType, PanelConfig, PanelEvent, PanelType, PartitionStatusFlags, RiscoPanel, ZoneStatusFlags,
@@ -620,7 +620,7 @@ async fn handle_command(
 
     match cmd.op.as_str() {
         "SNAPSHOT" => {
-            info!("Command: SNAPSHOT");
+            debug!("Command: SNAPSHOT");
             let snapshot = build_snapshot(panel, zone_names).await;
             let snapshot_value = serde_json::to_value(&snapshot).ok();
             publish_snapshot(client, topic, panel, zone_names).await;
@@ -859,9 +859,13 @@ async fn main() -> Result<()> {
                 Ok(Event::Incoming(Packet::Publish(msg))) => {
                     if msg.topic == sub_topic {
                         let payload = String::from_utf8_lossy(&msg.payload);
-                        info!("MQTT command received: {payload}");
                         match serde_json::from_str::<MqttCommand>(&payload) {
                             Ok(cmd) => {
+                                if cmd.op == "SNAPSHOT" {
+                                    debug!("MQTT command received: {payload}");
+                                } else {
+                                    info!("MQTT command received: {payload}");
+                                }
                                 let panel_lock = panel_cmds.lock().await;
                                 handle_command(
                                     &payload,
