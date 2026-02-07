@@ -240,7 +240,7 @@ impl ProxyTcpTransport {
                     if data.len() > 1 && data[1] == CLOUD {
                         // Cloud handshake data — set timer and forward to panel
                         // (cloud_connected is set after 45s timer)
-                        let _ = engine.send_raw("").await; // forward via panel writer
+                        let _ = engine.send_raw("", None).await; // forward via panel writer
                     } else {
                         // Decode to check for RMT/LCL/DCN interception
                         let decoded = {

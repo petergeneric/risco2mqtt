@@ -175,7 +175,7 @@ impl Zone {
     pub fn new(id: u32) -> Self {
         Self {
             id,
-            label: String::new(),
+            label: format!("Zone {}", id),
             zone_type: ZoneType::NotUsed,
             technology: ZoneTechnology::None,
             partitions: vec![1],
@@ -246,7 +246,7 @@ impl Zone {
     pub fn is_comm_trouble(&self) -> bool { self.status.contains(ZoneStatusFlags::COMM_TROUBLE) }
     pub fn is_soak_test(&self) -> bool { self.status.contains(ZoneStatusFlags::SOAK_TEST) }
     pub fn is_24hours(&self) -> bool { self.status.contains(ZoneStatusFlags::HOURS_24) }
-    pub fn is_not_used(&self) -> bool { !self.technology.is_used() }
+    pub fn is_not_used(&self) -> bool { self.zone_type == ZoneType::NotUsed || !self.technology.is_used() }
 }
 
 #[cfg(test)]
@@ -314,6 +314,31 @@ mod tests {
         assert_eq!(ZoneTechnology::from_char('N'), ZoneTechnology::None);
         assert!(ZoneTechnology::Wired.is_used());
         assert!(!ZoneTechnology::None.is_used());
+    }
+
+    #[test]
+    fn test_zone_default_label() {
+        let zone = Zone::new(5);
+        assert_eq!(zone.label, "Zone 5");
+    }
+
+    #[test]
+    fn test_zone_is_not_used_checks_zone_type() {
+        let mut zone = Zone::new(1);
+        // Default zone_type is NotUsed, technology is None
+        assert!(zone.is_not_used());
+
+        // Set technology to Wired but keep zone_type as NotUsed
+        zone.technology = ZoneTechnology::Wired;
+        assert!(zone.is_not_used()); // Still not used because zone_type is NotUsed
+
+        // Set zone_type to something real
+        zone.zone_type = ZoneType::Instant;
+        assert!(!zone.is_not_used()); // Now it's used
+
+        // Set technology back to None
+        zone.technology = ZoneTechnology::None;
+        assert!(zone.is_not_used()); // Not used because technology is None
     }
 
     #[test]

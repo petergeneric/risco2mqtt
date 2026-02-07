@@ -340,7 +340,11 @@ impl RiscoComm {
                 let idx = (min as usize - 1) + j;
                 if idx < zones.len() {
                     let zone = &mut zones[idx];
-                    zone.label = zlabels.get(j).cloned().unwrap_or_default();
+                    if let Some(label) = zlabels.get(j) {
+                        if !label.is_empty() {
+                            zone.label = label.clone();
+                        }
+                    }
                     if let Some(t) = ztypes.get(j) {
                         if let Ok(type_num) = t.parse::<u8>() {
                             zone.zone_type = crate::constants::ZoneType::from_u8(type_num)

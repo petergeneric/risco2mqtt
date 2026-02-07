@@ -234,6 +234,10 @@ impl RiscoPanel {
         loop {
             interval.tick().await;
             if let Err(e) = self.send_watchdog().await {
+                if matches!(e, RiscoError::CommandTimeout { .. }) {
+                    warn!("Watchdog CLOCK timed out, will retry: {}", e);
+                    continue;
+                }
                 warn!("Watchdog CLOCK failed: {}", e);
                 break;
             }

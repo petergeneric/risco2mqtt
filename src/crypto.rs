@@ -122,6 +122,10 @@ impl RiscoCrypt {
     pub fn is_valid_crc(decrypted_message: &str, received_crc: &str) -> bool {
         let sep_char = char::from(SEP);
         if let Some(sep_pos) = decrypted_message.find(sep_char) {
+            if received_crc.len() != 4 || !received_crc.chars().all(|c| c.is_ascii_hexdigit()) {
+                debug!("CRC Not Ok (received CRC is not 4 hex chars: {:?})", received_crc);
+                return false;
+            }
             let data_with_sep = &decrypted_message[..=sep_pos];
             let computed = Self::compute_crc(data_with_sep.as_bytes());
             let valid = received_crc == computed;
@@ -249,7 +253,7 @@ impl RiscoCrypt {
                 }
                 let decrypted = data[i] ^ self.pseudo_buffer[self.crypt_pos - offset];
                 result.push(decrypted);
-            } else if data[i] != DLE {
+            } else {
                 result.push(data[i]);
             }
 
@@ -504,5 +508,41 @@ mod tests {
         crypt.set_crypt_enabled(true);
         let encoded = crypt.encode_command("TEST", "01", Some(false));
         assert_ne!(encoded[1], CRYPT);
+    }
+
+    #[test]
+    fn test_is_valid_crc_rejects_non_hex_crc() {
+        // A garbled CRC should be rejected without panicking
+        assert!(!RiscoCrypt::is_valid_crc("01ACK\x17", "ZZZZ"));
+        assert!(!RiscoCrypt::is_valid_crc("01ACK\x17", "12"));
+        assert!(!RiscoCrypt::is_valid_crc("01ACK\x17", ""));
+        assert!(!RiscoCrypt::is_valid_crc("01ACK\x17", "12345"));
+    }
+
+    #[test]
+    fn test_unencrypted_dle_bytes_preserved() {
+        // Verify that DLE bytes (0x10) in unencrypted messages are NOT stripped.
+        // Build a raw unencrypted frame containing a DLE byte in the command payload
+        // and verify decode_message preserves it.
+        let mut crypt = RiscoCrypt::new(0);
+        crypt.set_crypt_enabled(false);
+
+        // Build a frame manually: STX + "01" + cmd_with_dle + SEP + CRC + ETX
+        // The command contains a byte that happens to equal DLE (0x10).
+        // In a real scenario this is unusual but must not be silently dropped.
+        let cmd_bytes = b"X\x10Y"; // 'X', DLE, 'Y'
+        let full_cmd = format!("01{}{}", String::from_utf8_lossy(cmd_bytes), char::from(0x17));
+        let crc = RiscoCrypt::compute_crc(full_cmd.as_bytes());
+
+        let mut frame = vec![0x02]; // STX
+        frame.extend_from_slice(full_cmd.as_bytes());
+        frame.extend_from_slice(crc.as_bytes());
+        frame.push(0x03); // ETX
+
+        let decoded = crypt.decode_message(&frame);
+        // The DLE byte should be preserved in the command
+        assert_eq!(decoded.cmd_id, "01");
+        assert_eq!(decoded.command.as_bytes(), cmd_bytes);
+        assert!(decoded.crc_valid);
     }
 }

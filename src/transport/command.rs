@@ -217,14 +217,23 @@ impl CommandEngine {
     }
 
     /// Send a raw command without waiting for response (e.g., DCN on disconnect).
-    pub async fn send_raw(&self, command_str: &str) -> Result<()> {
+    ///
+    /// `force_crypt` overrides the current encryption state when encoding:
+    /// - `Some(false)` forces unencrypted (used for DCN when crypt key may be wrong)
+    /// - `Some(true)` forces encrypted
+    /// - `None` uses the current crypt state
+    pub async fn send_raw(&self, command_str: &str, force_crypt: Option<bool>) -> Result<()> {
+        if !*self.connected.read().await {
+            return Err(RiscoError::Disconnected);
+        }
+
         let cmd_id_str = {
             let seq = self.sequence_id.lock().await;
             format!("{:02}", *seq)
         };
         let encoded = {
             let mut crypt = self.crypt.lock().await;
-            crypt.encode_command(command_str, &cmd_id_str, None)
+            crypt.encode_command(command_str, &cmd_id_str, force_crypt)
         };
 
         let mut writer = self.writer.lock().await;
@@ -287,11 +296,24 @@ impl CommandEngine {
         PanelErrorCode::is_error_code(data)
     }
 
-    /// Disconnect: mark as disconnected and attempt DCN command.
+    /// Disconnect: send unencrypted DCN then mark as disconnected.
+    ///
+    /// DCN is sent fully unencrypted so the panel can understand it even if the
+    /// encryption key was wrong or partially established. We disable the XOR
+    /// cipher before sending, since `force_crypt` only controls the CRYPT
+    /// indicator byte — not the actual XOR cipher which is governed by
+    /// `crypt_enabled`. Since we're disconnecting, we don't need to restore it.
+    /// The DCN is sent before setting `connected = false` so that the
+    /// disconnected guard in `send_raw` doesn't block it.
     pub async fn disconnect(&self) -> Result<()> {
+        // Send DCN fully unencrypted so the panel can understand it even
+        // if the encryption key was wrong or partially established.
+        {
+            let mut crypt = self.crypt.lock().await;
+            crypt.set_crypt_enabled(false);
+        }
+        let _ = self.send_raw("DCN", Some(false)).await;
         self.set_connected(false).await;
-        // Best-effort DCN
-        let _ = self.send_raw("DCN").await;
         Ok(())
     }
 }
