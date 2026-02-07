@@ -9,7 +9,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::config::PanelConfig;
-use crate::constants::ETX;
+use crate::constants::{DLE, ETX};
 use crate::crypto::RiscoCrypt;
 use crate::error::{PanelErrorCode, RiscoError, Result};
 use crate::event::{EventSender, PanelEvent};
@@ -220,17 +220,29 @@ fn spawn_reader_task(
     })
 }
 
-/// Split a data buffer into individual messages on ETX+STX boundaries.
+/// Split a data buffer into individual messages on ETX boundaries,
+/// respecting DLE byte-stuffing (escaped ETX bytes are not frame delimiters).
+///
+/// The Risco protocol uses DLE-stuffing: any encrypted byte that equals
+/// STX (0x02), ETX (0x03), or DLE (0x10) is preceded by a DLE byte on the wire.
+/// Only a bare ETX (not preceded by DLE) marks the end of a frame.
 fn split_messages(data: &[u8], leftover: &mut Vec<u8>) -> Vec<Vec<u8>> {
     let mut messages = Vec::new();
     let mut start = 0;
+    let mut i = 0;
 
-    for i in 0..data.len() {
-        if data[i] == ETX {
-            // Check if this ETX is followed by STX (another message)
+    while i < data.len() {
+        if data[i] == DLE && i + 1 < data.len() {
+            // DLE escape sequence — skip both the DLE and the following byte
+            // so that an escaped ETX (DLE+ETX) is not treated as a frame end.
+            i += 2;
+        } else if data[i] == ETX {
             let msg = &data[start..=i];
             messages.push(msg.to_vec());
             start = i + 1;
+            i += 1;
+        } else {
+            i += 1;
         }
     }
 
@@ -319,4 +331,96 @@ fn emit_panel_data(_event_tx: &EventSender, _command: &str) {
     // This is done at the comm.rs level via subscribe() rather than
     // through the event bus, to avoid circular dependency.
     // Panel data is routed through the command response mechanism.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::{DLE, ETX, STX, CRYPT};
+
+    #[test]
+    fn test_split_single_message() {
+        let data = [STX, 0x41, 0x42, ETX];
+        let mut leftover = Vec::new();
+        let msgs = split_messages(&data, &mut leftover);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0], data);
+        assert!(leftover.is_empty());
+    }
+
+    #[test]
+    fn test_split_two_messages() {
+        let data = [STX, 0x41, ETX, STX, 0x42, ETX];
+        let mut leftover = Vec::new();
+        let msgs = split_messages(&data, &mut leftover);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0], [STX, 0x41, ETX]);
+        assert_eq!(msgs[1], [STX, 0x42, ETX]);
+    }
+
+    #[test]
+    fn test_split_dle_escaped_etx_not_treated_as_boundary() {
+        // Encrypted payload contains DLE+ETX (an escaped 0x03 data byte).
+        // This must NOT split the message.
+        let data = [STX, CRYPT, 0x41, DLE, ETX, 0x42, ETX];
+        let mut leftover = Vec::new();
+        let msgs = split_messages(&data, &mut leftover);
+        assert_eq!(msgs.len(), 1, "DLE-escaped ETX should not split the message");
+        assert_eq!(msgs[0], data);
+    }
+
+    #[test]
+    fn test_split_dle_escaped_etx_with_multiple_messages() {
+        // First message has DLE-escaped ETX in payload, second is normal.
+        let msg1 = [STX, CRYPT, 0x41, DLE, ETX, 0x42, ETX];
+        let msg2 = [STX, 0x43, ETX];
+        let mut data = Vec::new();
+        data.extend_from_slice(&msg1);
+        data.extend_from_slice(&msg2);
+        let mut leftover = Vec::new();
+        let msgs = split_messages(&data, &mut leftover);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0], msg1);
+        assert_eq!(msgs[1], msg2.to_vec());
+    }
+
+    #[test]
+    fn test_split_dle_escaped_dle() {
+        // DLE+DLE is an escaped DLE byte, not related to ETX.
+        let data = [STX, CRYPT, DLE, DLE, 0x41, ETX];
+        let mut leftover = Vec::new();
+        let msgs = split_messages(&data, &mut leftover);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0], data);
+    }
+
+    #[test]
+    fn test_split_incomplete_message_goes_to_leftover() {
+        let data = [STX, 0x41, 0x42]; // no ETX
+        let mut leftover = Vec::new();
+        let msgs = split_messages(&data, &mut leftover);
+        assert_eq!(msgs.len(), 0);
+        assert_eq!(leftover, data);
+    }
+
+    #[test]
+    fn test_split_roundtrip_with_crypto() {
+        // Encode a command with encryption, verify split_messages keeps it intact.
+        use crate::crypto::RiscoCrypt;
+        for panel_id in [1, 100, 1234, 5678, 9999] {
+            let mut crypt = RiscoCrypt::new(panel_id);
+            crypt.set_crypt_enabled(true);
+            let encoded = crypt.encode_command("CUSTLST?", "01", None);
+            let mut leftover = Vec::new();
+            let msgs = split_messages(&encoded, &mut leftover);
+            assert_eq!(
+                msgs.len(),
+                1,
+                "Encoded message for panel_id {} was incorrectly split",
+                panel_id
+            );
+            assert_eq!(msgs[0], encoded);
+            assert!(leftover.is_empty());
+        }
+    }
 }
