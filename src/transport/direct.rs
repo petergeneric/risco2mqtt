@@ -124,7 +124,7 @@ impl DirectTcpTransport {
                     // Run panel ID discovery
                     match discovery::discover_panel_id(&command_engine).await {
                         Ok(discovered_id) => {
-                            info!("Discovered panel ID: {}", discovered_id);
+                            warn!("Discovered panel ID: {}. Set panel_id to this value in your config to skip discovery on future connections.", discovered_id);
                         }
                         Err(e) => {
                             error!("Panel ID discovery failed: {}", e);

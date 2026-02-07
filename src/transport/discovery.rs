@@ -81,7 +81,7 @@ pub async fn discover_panel_id(engine: &Arc<CommandEngine>) -> Result<u16> {
 
     match result {
         Ok(ref response) if valid && !CommandEngine::is_error_code(response) => {
-            info!("Discovered panel ID: {}", possible_key);
+            warn!("Discovered panel ID: {}", possible_key);
             Ok(possible_key)
         }
         _ => {
