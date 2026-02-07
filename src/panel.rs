@@ -442,6 +442,22 @@ impl RiscoPanel {
         }
     }
 
+    /// Route a raw panel data string to the appropriate status handler.
+    ///
+    /// Called when the transport layer receives an unsolicited status message
+    /// (ZSTT, PSTT, OSTT, SSTT) so that cached device state stays in sync.
+    pub async fn route_panel_data(&self, data: &str) {
+        if data.starts_with("ZSTT") {
+            self.handle_zone_status(data).await;
+        } else if data.starts_with("PSTT") {
+            self.handle_partition_status(data).await;
+        } else if data.starts_with("OSTT") {
+            self.handle_output_status(data).await;
+        } else if data.starts_with("SSTT") {
+            self.handle_system_status(data).await;
+        }
+    }
+
     /// Disconnect from the panel and clean up.
     pub async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from panel");

@@ -328,12 +328,16 @@ async fn process_message(
     emit_panel_data(event_tx, &decoded.command);
 }
 
-/// Emit panel data through the event system for the comm layer to process.
-fn emit_panel_data(_event_tx: &EventSender, _command: &str) {
-    // The comm layer handles routing of ZSTT, PSTT, OSTT, SSTT messages.
-    // This is done at the comm.rs level via subscribe() rather than
-    // through the event bus, to avoid circular dependency.
-    // Panel data is routed through the command response mechanism.
+/// Emit panel data through the event system so the panel can update cached state.
+fn emit_panel_data(event_tx: &EventSender, command: &str) {
+    // Only emit status update messages that affect cached device state.
+    if command.starts_with("ZSTT")
+        || command.starts_with("PSTT")
+        || command.starts_with("OSTT")
+        || command.starts_with("SSTT")
+    {
+        let _ = event_tx.send(PanelEvent::PanelData(command.to_string()));
+    }
 }
 
 #[cfg(test)]

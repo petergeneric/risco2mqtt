@@ -564,6 +564,10 @@ async fn handle_panel_event(
             publish_snapshot(client, topic, panel, zone_names).await;
         }
 
+        PanelEvent::PanelData(data) => {
+            panel.route_panel_data(&data).await;
+        }
+
         _ => {}
     }
 }
