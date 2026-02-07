@@ -197,9 +197,6 @@ pub enum RiscoError {
     #[error("Bad encryption key: panel_id={panel_id}")]
     BadCryptKey { panel_id: u16 },
 
-    #[error("Panel type mismatch: expected {expected}, got {actual}")]
-    PanelTypeMismatch { expected: String, actual: String },
-
     #[error("Socket disconnected")]
     Disconnected,
 

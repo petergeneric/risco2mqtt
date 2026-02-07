@@ -44,7 +44,10 @@ struct Config {
 
 #[derive(Debug, Deserialize)]
 struct PanelToml {
-    panel_type: String,
+    /// Panel type name (e.g., "LightSys", "Agility"). Optional: when omitted,
+    /// the panel type is auto-discovered from the PNLCNF response at connect time.
+    #[serde(default)]
+    panel_type: Option<String>,
     panel_ip: String,
     #[serde(default = "default_panel_port")]
     panel_port: u16,
@@ -62,6 +65,8 @@ struct PanelToml {
     ntp_port: String,
     #[serde(default)]
     disable_risco_cloud: bool,
+    #[serde(default = "default_watchdog_interval")]
+    watchdog_interval_ms: u64,
 }
 
 fn default_panel_port() -> u16 {
@@ -81,6 +86,9 @@ fn default_ntp_server() -> String {
 }
 fn default_ntp_port() -> String {
     "123".to_string()
+}
+fn default_watchdog_interval() -> u64 {
+    5000
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,7 +131,13 @@ fn parse_panel_type(s: &str) -> Result<PanelType> {
 }
 
 fn build_panel_config(toml: &PanelToml) -> Result<PanelConfig> {
-    let panel_type = parse_panel_type(&toml.panel_type)?;
+    let panel_type = match &toml.panel_type {
+        Some(pt) => parse_panel_type(pt)?,
+        None => {
+            info!("No panel_type configured; will auto-discover from panel");
+            PanelType::Agility // Default; overridden by verify_panel_type auto-discovery
+        }
+    };
     Ok(PanelConfig::builder()
         .panel_type(panel_type)
         .panel_ip(&toml.panel_ip)
@@ -135,6 +149,7 @@ fn build_panel_config(toml: &PanelToml) -> Result<PanelConfig> {
         .ntp_server(&toml.ntp_server)
         .ntp_port(&toml.ntp_port)
         .disable_risco_cloud(toml.disable_risco_cloud)
+        .watchdog_interval_ms(toml.watchdog_interval_ms)
         .build())
 }
 

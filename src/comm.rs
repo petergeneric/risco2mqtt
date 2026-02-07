@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use tokio::time::{sleep, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::config::{panel_limits, PanelConfig, PanelType, SocketMode};
 use crate::constants::{PanelHwType, timezone_index_for_offset};
@@ -111,35 +111,39 @@ impl RiscoComm {
         }
     }
 
-    /// Verify the connected panel type matches the expected type.
-    async fn verify_panel_type(&self) -> Result<()> {
+    /// Verify and auto-discover the connected panel type.
+    ///
+    /// Queries the panel's hardware type via PNLCNF. If the detected type
+    /// differs from the configured one, a warning is logged and the config
+    /// is updated to match the actual panel. This prevents disconnection
+    /// when the user misconfigures (or omits) the panel type.
+    async fn verify_panel_type(&mut self) -> Result<()> {
         let response = self.send_command("PNLCNF", false).await?;
         let panel_type_str = parse_value_after_eq(&response);
         debug!("Connected panel type: {}", panel_type_str);
 
-        let expected_hw = self.config.panel_type.hardware_type();
         match PanelHwType::from_name(panel_type_str) {
-            Some(hw) if hw == expected_hw => {
-                debug!("Panel type matches expected type");
+            Some(hw) => {
+                let detected_type = PanelType::from_hw_type(hw);
+                let expected_hw = self.config.panel_type.hardware_type();
+                if hw != expected_hw {
+                    warn!(
+                        "Panel type mismatch: configured {} but detected {}. Using detected type.",
+                        expected_hw.as_str(),
+                        hw.as_str()
+                    );
+                    self.config.panel_type = detected_type;
+                } else {
+                    debug!("Panel type matches: {}", hw.as_str());
+                }
                 Ok(())
             }
-            Some(hw) => {
-                error!(
-                    "Panel type mismatch: expected {}, got {}",
-                    expected_hw.as_str(),
-                    hw.as_str()
-                );
-                Err(RiscoError::PanelTypeMismatch {
-                    expected: expected_hw.as_str().to_string(),
-                    actual: hw.as_str().to_string(),
-                })
-            }
             None => {
-                error!("Unknown panel type: {}", panel_type_str);
-                Err(RiscoError::PanelTypeMismatch {
-                    expected: expected_hw.as_str().to_string(),
-                    actual: panel_type_str.to_string(),
-                })
+                warn!(
+                    "Unknown panel hardware type: {}. Keeping configured type.",
+                    panel_type_str
+                );
+                Ok(())
             }
         }
     }

@@ -37,6 +37,22 @@ impl PanelType {
             Self::ProsysPlus | Self::GTPlus => PanelHwType::RP512,
         }
     }
+
+    /// Returns the default PanelType for a given hardware type.
+    ///
+    /// Used during auto-discovery when the panel reports its hardware type
+    /// via the PNLCNF command. Note that RP512 maps to ProsysPlus by default
+    /// (GTPlus shares the same hardware type).
+    pub fn from_hw_type(hw: PanelHwType) -> Self {
+        match hw {
+            PanelHwType::RW032 => Self::Agility4,
+            PanelHwType::RW132 => Self::Agility,
+            PanelHwType::RW232 => Self::WiComm,
+            PanelHwType::RW332 => Self::WiCommPro,
+            PanelHwType::RP432 => Self::LightSys,
+            PanelHwType::RP512 => Self::ProsysPlus,
+        }
+    }
 }
 
 /// Compute the device limits for a panel type, potentially adjusted by firmware version.
@@ -147,6 +163,8 @@ pub struct PanelConfig {
     pub cloud_port: u16,
     /// Proxy mode: cloud server URL
     pub cloud_url: String,
+    /// Watchdog CLOCK interval in milliseconds (default: 5000)
+    pub watchdog_interval_ms: u64,
 }
 
 impl Default for PanelConfig {
@@ -170,6 +188,7 @@ impl Default for PanelConfig {
             listening_port: 33000,
             cloud_port: 33000,
             cloud_url: "www.riscocloud.com".to_string(),
+            watchdog_interval_ms: 5000,
         }
     }
 }
@@ -278,6 +297,11 @@ impl PanelConfigBuilder {
         self
     }
 
+    pub fn watchdog_interval_ms(mut self, ms: u64) -> Self {
+        self.config.watchdog_interval_ms = ms;
+        self
+    }
+
     pub fn build(self) -> PanelConfig {
         self.config
     }
@@ -333,5 +357,42 @@ mod tests {
         assert_eq!(config.panel_ip, "10.0.0.1");
         assert_eq!(config.panel_password, "1234");
         assert_eq!(config.panel_id, 5678);
+    }
+
+    #[test]
+    fn test_watchdog_interval_config() {
+        let config = PanelConfig::builder()
+            .watchdog_interval_ms(10000)
+            .build();
+        assert_eq!(config.watchdog_interval_ms, 10000);
+    }
+
+    #[test]
+    fn test_watchdog_interval_default() {
+        let config = PanelConfig::builder().build();
+        assert_eq!(config.watchdog_interval_ms, 5000);
+    }
+
+    #[test]
+    fn test_panel_type_from_hw_type() {
+        assert_eq!(PanelType::from_hw_type(PanelHwType::RW032), PanelType::Agility4);
+        assert_eq!(PanelType::from_hw_type(PanelHwType::RW132), PanelType::Agility);
+        assert_eq!(PanelType::from_hw_type(PanelHwType::RW232), PanelType::WiComm);
+        assert_eq!(PanelType::from_hw_type(PanelHwType::RW332), PanelType::WiCommPro);
+        assert_eq!(PanelType::from_hw_type(PanelHwType::RP432), PanelType::LightSys);
+        assert_eq!(PanelType::from_hw_type(PanelHwType::RP512), PanelType::ProsysPlus);
+    }
+
+    #[test]
+    fn test_panel_type_hw_type_roundtrip() {
+        // For all types except GTPlus (which shares RP512 with ProsysPlus),
+        // from_hw_type(hardware_type()) should return the same variant.
+        assert_eq!(PanelType::from_hw_type(PanelType::Agility4.hardware_type()), PanelType::Agility4);
+        assert_eq!(PanelType::from_hw_type(PanelType::Agility.hardware_type()), PanelType::Agility);
+        assert_eq!(PanelType::from_hw_type(PanelType::WiComm.hardware_type()), PanelType::WiComm);
+        assert_eq!(PanelType::from_hw_type(PanelType::WiCommPro.hardware_type()), PanelType::WiCommPro);
+        assert_eq!(PanelType::from_hw_type(PanelType::LightSys.hardware_type()), PanelType::LightSys);
+        // GTPlus shares RP512 with ProsysPlus, so from_hw_type defaults to ProsysPlus
+        assert_eq!(PanelType::from_hw_type(PanelType::GTPlus.hardware_type()), PanelType::ProsysPlus);
     }
 }

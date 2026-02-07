@@ -1,4 +1,6 @@
 [panel]
+# Panel type: Agility4, Agility, WiComm, WiCommPro, LightSys, ProsysPlus, GTPlus
+# Optional: when omitted, auto-discovered from the panel at connect time.
 panel_type = "LightSys"
 panel_ip = "192.168.1.2"
 panel_port = 1000

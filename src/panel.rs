@@ -70,6 +70,8 @@ pub struct RiscoPanel {
     watchdog_handle: Option<tokio::task::JoinHandle<()>>,
     data_listener_handle: Option<tokio::task::JoinHandle<()>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    disconnecting: Arc<RwLock<bool>>,
+    watchdog_interval_ms: u64,
 }
 
 impl RiscoPanel {
@@ -116,6 +118,7 @@ impl RiscoPanel {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let auto_discover = config.auto_discover;
+        let watchdog_interval_ms = config.watchdog_interval_ms.max(1000);
         let mut comm = RiscoComm::new(config, event_tx.clone());
         comm.connect().await?;
 
@@ -134,6 +137,8 @@ impl RiscoPanel {
             watchdog_handle: None,
             data_listener_handle: None,
             shutdown_tx,
+            disconnecting: Arc::new(RwLock::new(false)),
+            watchdog_interval_ms,
         };
 
         if auto_discover {
@@ -192,7 +197,7 @@ impl RiscoPanel {
         Ok(())
     }
 
-    /// Start the watchdog timer that sends CLOCK every 5 seconds.
+    /// Start the watchdog timer that sends CLOCK at the configured interval.
     fn start_watchdog(&mut self, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
         let _event_tx = self.event_tx.clone();
         // We need a way to send commands from the watchdog.
@@ -201,10 +206,11 @@ impl RiscoPanel {
         // in a separate task that signals back.
 
         // For the watchdog, we'll track the shutdown signal
+        let watchdog_ms = self.watchdog_interval_ms;
         let handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = sleep(Duration::from_secs(5)) => {
+                    _ = sleep(Duration::from_millis(watchdog_ms)) => {
                         // Watchdog tick — the actual CLOCK command is sent
                         // by the panel's main loop checking this event
                     }
@@ -230,9 +236,13 @@ impl RiscoPanel {
     /// Run the panel event loop. This handles watchdog ticks and processes
     /// unsolicited status updates from the panel.
     pub async fn run(&self) -> Result<()> {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut interval = tokio::time::interval(Duration::from_millis(self.watchdog_interval_ms));
         loop {
             interval.tick().await;
+            if *self.disconnecting.read().await {
+                debug!("Disconnecting, stopping watchdog");
+                break;
+            }
             if let Err(e) = self.send_watchdog().await {
                 if matches!(e, RiscoError::CommandTimeout { .. }) {
                     warn!("Watchdog CLOCK timed out, will retry: {}", e);
@@ -465,6 +475,7 @@ impl RiscoPanel {
     /// Disconnect from the panel and clean up.
     pub async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from panel");
+        *self.disconnecting.write().await = true;
         // Signal shutdown
         let _ = self.shutdown_tx.send(true);
 

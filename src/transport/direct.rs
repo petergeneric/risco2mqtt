@@ -106,36 +106,57 @@ impl DirectTcpTransport {
 
         sleep(Duration::from_millis(1000)).await;
 
-        // Test encryption with CUSTLST? command
+        // Test encryption with CUSTLST? command (retry up to 3 times)
         command_engine.set_in_crypt_test(true).await;
-        let crypt_test_result = command_engine.send_command("CUSTLST?", false).await;
-        let crypt_valid = {
-            let valid = command_engine.crypt_key_valid.read().await;
-            valid.unwrap_or(false)
-        };
+        let mut crypt_test_passed = false;
 
-        match crypt_test_result {
-            Ok(ref response) if crypt_valid && !CommandEngine::is_error_code(response) => {
-                debug!("Crypt test passed");
-            }
-            _ => {
-                if config.discover_code {
-                    warn!("Bad panel ID: {}. Attempting discovery...", config.panel_id);
-                    // Run panel ID discovery
-                    match discovery::discover_panel_id(&command_engine).await {
-                        Ok(discovered_id) => {
-                            warn!("Discovered panel ID: {}. Set panel_id to this value in your config to skip discovery on future connections.", discovered_id);
-                        }
-                        Err(e) => {
-                            error!("Panel ID discovery failed: {}", e);
-                            return Err(e);
-                        }
-                    }
-                } else {
-                    return Err(RiscoError::BadCryptKey {
-                        panel_id: config.panel_id,
-                    });
+        for attempt in 1..=3u8 {
+            // Reset validity flag before each attempt
+            *command_engine.crypt_key_valid.write().await = None;
+
+            let crypt_test_result = command_engine.send_command("CUSTLST?", false).await;
+            let crypt_valid = {
+                let valid = command_engine.crypt_key_valid.read().await;
+                valid.unwrap_or(false)
+            };
+
+            match crypt_test_result {
+                Ok(ref response) if crypt_valid && !CommandEngine::is_error_code(response) => {
+                    debug!("Crypt test passed (attempt {})", attempt);
+                    crypt_test_passed = true;
+                    break;
                 }
+                Ok(ref response) => {
+                    warn!("Crypt test failed (attempt {}/3): response={}", attempt, response);
+                }
+                Err(ref e) => {
+                    warn!("Crypt test error (attempt {}/3): {}", attempt, e);
+                }
+            }
+
+            if attempt < 3 {
+                sleep(Duration::from_millis(500)).await;
+            }
+        }
+
+        if !crypt_test_passed {
+            if config.discover_code {
+                warn!("Bad panel ID: {}. Attempting discovery...", config.panel_id);
+                match discovery::discover_panel_id(&command_engine).await {
+                    Ok(discovered_id) => {
+                        warn!("Discovered panel ID: {}. Set panel_id to this value in your config to skip discovery on future connections.", discovered_id);
+                    }
+                    Err(e) => {
+                        error!("Panel ID discovery failed: {}", e);
+                        command_engine.set_in_crypt_test(false).await;
+                        return Err(e);
+                    }
+                }
+            } else {
+                command_engine.set_in_crypt_test(false).await;
+                return Err(RiscoError::BadCryptKey {
+                    panel_id: config.panel_id,
+                });
             }
         }
         command_engine.set_in_crypt_test(false).await;
