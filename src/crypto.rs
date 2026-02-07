@@ -157,11 +157,16 @@ impl RiscoCrypt {
         // Start of frame
         encrypted.push(STX);
 
-        // Encryption indicator
-        let use_crypt = force_crypt.unwrap_or(self.crypt_enabled);
-        if use_crypt {
+        // Encryption indicator byte: controlled by force_crypt or crypt_enabled
+        let show_crypt = force_crypt.unwrap_or(self.crypt_enabled);
+        if show_crypt {
             encrypted.push(CRYPT);
         }
+
+        // Actual XOR encryption: always governed by crypt_enabled (matching JS
+        // behavior where EncryptChars checks this.CryptCommand regardless of
+        // the ForceCrypt parameter).
+        let use_crypt = self.crypt_enabled;
 
         // Build full command: cmd_id + command + separator
         let full_cmd = format!("{}{}{}", cmd_id, command, char::from(SEP));
