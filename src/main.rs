@@ -203,7 +203,7 @@ struct MqttPartition {
 
 #[derive(Deserialize)]
 struct MqttCommand {
-    command: String,
+    op: String,
     #[serde(default)]
     partition_id: Option<u32>,
     #[serde(default)]
@@ -499,7 +499,7 @@ async fn handle_command(
     panel: &RiscoPanel,
     zone_names: &HashMap<u32, String>,
 ) {
-    match cmd.command.as_str() {
+    match cmd.op.as_str() {
         "SNAPSHOT" => {
             info!("Command: SNAPSHOT");
             publish_snapshot(client, topic, panel, zone_names).await;
