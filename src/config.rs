@@ -129,8 +129,10 @@ pub struct PanelConfig {
     pub disable_risco_cloud: bool,
     /// Whether to enable RiscoCloud on the panel
     pub enable_risco_cloud: bool,
-    /// Reconnection delay in milliseconds
+    /// Reconnection delay in milliseconds (base delay for exponential backoff)
     pub reconnect_delay_ms: u64,
+    /// Maximum number of connection retries on transient errors (0 = no retries)
+    pub max_connect_retries: u32,
     /// NTP server for time sync when cloud is disabled
     pub ntp_server: String,
     /// NTP port
@@ -158,6 +160,7 @@ impl Default for PanelConfig {
             disable_risco_cloud: true,
             enable_risco_cloud: false,
             reconnect_delay_ms: 10000,
+            max_connect_retries: 3,
             ntp_server: "pool.ntp.org".to_string(),
             ntp_port: "123".to_string(),
             listening_port: 33000,
@@ -238,6 +241,11 @@ impl PanelConfigBuilder {
 
     pub fn reconnect_delay_ms(mut self, ms: u64) -> Self {
         self.config.reconnect_delay_ms = ms;
+        self
+    }
+
+    pub fn max_connect_retries(mut self, retries: u32) -> Self {
+        self.config.max_connect_retries = retries;
         self
     }
 

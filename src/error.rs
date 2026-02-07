@@ -222,4 +222,21 @@ pub enum RiscoError {
     ChannelClosed,
 }
 
+impl RiscoError {
+    /// Whether this error is transient and the connection should be retried.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            RiscoError::Io(_)
+                | RiscoError::ConnectionTimeout
+                | RiscoError::CommandTimeout { .. }
+                | RiscoError::Disconnected
+                | RiscoError::SocketDestroyed
+                | RiscoError::CrcMismatch
+                | RiscoError::CrcLimitExceeded { .. }
+                | RiscoError::ChannelClosed
+        )
+    }
+}
+
 pub type Result<T> = std::result::Result<T, RiscoError>;

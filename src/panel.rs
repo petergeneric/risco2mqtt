@@ -74,7 +74,44 @@ pub struct RiscoPanel {
 
 impl RiscoPanel {
     /// Connect to a panel with the given configuration and initialize all devices.
+    ///
+    /// Retries on transient errors (disconnects, timeouts, I/O errors) with
+    /// exponential backoff. The base delay is `reconnect_delay_ms` from the config
+    /// and the maximum number of retries is `max_connect_retries`.
     pub async fn connect(config: PanelConfig) -> Result<Self> {
+        let max_retries = config.max_connect_retries;
+        let base_delay_ms = config.reconnect_delay_ms;
+
+        let mut last_error = None;
+
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                let delay_ms = base_delay_ms * (1 << (attempt - 1).min(4));
+                warn!(
+                    "Connection attempt {} failed, retrying in {:.1}s...",
+                    attempt,
+                    delay_ms as f64 / 1000.0
+                );
+                sleep(Duration::from_millis(delay_ms)).await;
+            }
+
+            match Self::try_connect(config.clone()).await {
+                Ok(panel) => return Ok(panel),
+                Err(e) => {
+                    if !e.is_retryable() || attempt == max_retries {
+                        return Err(e);
+                    }
+                    warn!("Connection error (attempt {}): {}", attempt + 1, e);
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(RiscoError::Disconnected))
+    }
+
+    /// Single connection attempt without retries.
+    async fn try_connect(config: PanelConfig) -> Result<Self> {
         let (event_tx, _event_rx) = event_channel(256);
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
