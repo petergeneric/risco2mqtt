@@ -295,6 +295,14 @@ impl RiscoPanel {
         !self.zones.read().await.is_empty() || !self.partitions.read().await.is_empty()
     }
 
+    /// Get the current panel configuration.
+    ///
+    /// The config may have been updated during connection if panel_id or
+    /// panel_type were auto-discovered.
+    pub fn config(&self) -> &PanelConfig {
+        self.comm.config()
+    }
+
     /// Subscribe to panel events.
     pub fn subscribe(&self) -> EventReceiver {
         self.event_tx.subscribe()

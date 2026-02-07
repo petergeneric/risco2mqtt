@@ -582,12 +582,10 @@ async fn handle_panel_event(
 
         PanelEvent::Connected => {
             info!("Panel connected");
-            publish_simple_event(client, topic, "CONNECTED").await;
         }
 
         PanelEvent::Disconnected => {
             warn!("Panel disconnected");
-            publish_simple_event(client, topic, "DISCONNECTED").await;
         }
 
         PanelEvent::SystemInitComplete => {
@@ -794,8 +792,13 @@ async fn main() -> Result<()> {
     let zone_names = Arc::new(config.zone_names);
 
     // Connect to panel
+    let reconnect_delay_ms = panel_config.reconnect_delay_ms;
     info!("Connecting to Risco panel at {}:{}", config.panel.panel_ip, config.panel.panel_port);
-    let panel = Arc::new(Mutex::new(RiscoPanel::connect(panel_config).await?));
+    let panel = Arc::new(Mutex::new(RiscoPanel::connect(panel_config.clone()).await?));
+    let reconnect_config = {
+        let panel_lock = panel.lock().await;
+        panel_lock.config().clone()
+    };
     info!("Panel connected and initialized");
 
     // Set up MQTT
@@ -828,8 +831,68 @@ async fn main() -> Result<()> {
     };
     let event_handle = tokio::spawn(async move {
         let mut rx = event_rx;
+        let mut current_config = reconnect_config;
         loop {
             match rx.recv().await {
+                Ok(PanelEvent::Disconnected) => {
+                    warn!("Panel disconnected, will attempt reconnection");
+
+                    // Extract device snapshots from the old panel for reconnection
+                    let (zones, partitions, outputs, system) = {
+                        let panel_lock = panel_events.lock().await;
+                        (
+                            panel_lock.zones().await,
+                            panel_lock.partitions().await,
+                            panel_lock.outputs().await,
+                            panel_lock.system().await,
+                        )
+                    };
+
+                    // Outer reconnection loop — retries indefinitely
+                    loop {
+                        info!("Attempting panel reconnection...");
+                        match RiscoPanel::reconnect(
+                            current_config.clone(),
+                            zones.clone(),
+                            partitions.clone(),
+                            outputs.clone(),
+                            system.clone(),
+                        )
+                        .await
+                        {
+                            Ok(new_panel) => {
+                                // Update config with any memorized values from the new connection
+                                current_config = new_panel.config().clone();
+                                rx = new_panel.subscribe();
+                                {
+                                    let mut panel_lock = panel_events.lock().await;
+                                    *panel_lock = new_panel;
+                                }
+                                info!("Panel reconnected successfully");
+                                // Publish a fresh snapshot after reconnection
+                                {
+                                    let panel_lock = panel_events.lock().await;
+                                    publish_snapshot(
+                                        &client_events,
+                                        &topic_events,
+                                        &*panel_lock,
+                                        &zn_events,
+                                    )
+                                    .await;
+                                }
+                                break; // Back to main event loop
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Reconnection failed: {e}. Retrying in {:.1}s...",
+                                    reconnect_delay_ms as f64 / 1000.0
+                                );
+                                tokio::time::sleep(Duration::from_millis(reconnect_delay_ms))
+                                    .await;
+                            }
+                        }
+                    }
+                }
                 Ok(event) => {
                     let panel_lock = panel_events.lock().await;
                     handle_panel_event(
