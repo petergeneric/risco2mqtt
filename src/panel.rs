@@ -345,22 +345,24 @@ impl RiscoPanel {
         Ok(())
     }
 
-    /// Start the watchdog timer that sends CLOCK at the configured interval.
+    /// Start the watchdog task that sends CLOCK at the configured interval.
     fn start_watchdog(&mut self, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
-        let _event_tx = self.event_tx.clone();
-        // We need a way to send commands from the watchdog.
-        // Since RiscoComm isn't Send-safe across tasks directly,
-        // we use the event-based approach: the panel runs the watchdog
-        // in a separate task that signals back.
-
-        // For the watchdog, we'll track the shutdown signal
+        let engine = self.comm.engine().expect("transport not connected").clone();
         let watchdog_ms = self.watchdog_interval_ms;
         let handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = sleep(Duration::from_millis(watchdog_ms)) => {
-                        // Watchdog tick — the actual CLOCK command is sent
-                        // by the panel's main loop checking this event
+                        match engine.send_command("CLOCK", false).await {
+                            Ok(_) => {}
+                            Err(RiscoError::CommandTimeout { .. }) => {
+                                warn!("Watchdog CLOCK timed out, will retry");
+                            }
+                            Err(e) => {
+                                warn!("Watchdog CLOCK failed: {}", e);
+                                break;
+                            }
+                        }
                     }
                     _ = shutdown_rx.changed() => {
                         if *shutdown_rx.borrow() {
@@ -373,34 +375,6 @@ impl RiscoPanel {
         });
 
         self.watchdog_handle = Some(handle);
-    }
-
-    /// Send a watchdog CLOCK command. Call this periodically.
-    pub async fn send_watchdog(&self) -> Result<()> {
-        self.comm.send_command("CLOCK", false).await?;
-        Ok(())
-    }
-
-    /// Run the panel event loop. This handles watchdog ticks and processes
-    /// unsolicited status updates from the panel.
-    pub async fn run(&self) -> Result<()> {
-        let mut interval = tokio::time::interval(Duration::from_millis(self.watchdog_interval_ms));
-        loop {
-            interval.tick().await;
-            if *self.disconnecting.read().await {
-                debug!("Disconnecting, stopping watchdog");
-                break;
-            }
-            if let Err(e) = self.send_watchdog().await {
-                if matches!(e, RiscoError::CommandTimeout { .. }) {
-                    warn!("Watchdog CLOCK timed out, will retry: {}", e);
-                    continue;
-                }
-                warn!("Watchdog CLOCK failed: {}", e);
-                break;
-            }
-        }
-        Ok(())
     }
 
     // --- Device Accessors ---

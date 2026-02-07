@@ -116,7 +116,7 @@ impl RiscoComm {
     }
 
     /// Get the command engine for direct operations.
-    fn engine(&self) -> Result<&Arc<CommandEngine>> {
+    pub(crate) fn engine(&self) -> Result<&Arc<CommandEngine>> {
         if let Some(ref t) = self.direct_transport {
             Ok(t.engine())
         } else if let Some(ref t) = self.proxy_transport {
