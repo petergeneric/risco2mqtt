@@ -773,7 +773,12 @@ async fn handle_command(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    // systemd journal already adds timestamps, so omit them when running under systemd
+    if std::env::var_os("JOURNAL_STREAM").is_some() {
+        tracing_subscriber::fmt().without_time().init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
 
     let cli = Cli::parse();
 
