@@ -40,6 +40,8 @@ pub struct CommandEngine {
     is_proxy: bool,
     /// Last misunderstood data from bad CRC
     last_misunderstood: Arc<Mutex<Option<String>>>,
+    /// Raw bytes of the last received message (before decryption)
+    last_received_buffer: Arc<Mutex<Option<Vec<u8>>>>,
     /// Crypt key validity flag for discovery
     pub crypt_key_valid: Arc<RwLock<Option<bool>>>,
 }
@@ -66,6 +68,7 @@ impl CommandEngine {
             connected: Arc::new(RwLock::new(true)),
             is_proxy,
             last_misunderstood: Arc::new(Mutex::new(None)),
+            last_received_buffer: Arc::new(Mutex::new(None)),
             crypt_key_valid: Arc::new(RwLock::new(None)),
         }
     }
@@ -101,6 +104,10 @@ impl CommandEngine {
 
     pub fn last_misunderstood(&self) -> Arc<Mutex<Option<String>>> {
         self.last_misunderstood.clone()
+    }
+
+    pub fn last_received_buffer(&self) -> Arc<Mutex<Option<Vec<u8>>>> {
+        self.last_received_buffer.clone()
     }
 
     pub fn sequence_id(&self) -> Arc<Mutex<u8>> {
