@@ -13,6 +13,7 @@ use crate::constants::{DLE, ETX};
 use crate::crypto::RiscoCrypt;
 use crate::error::{PanelErrorCode, RiscoError, Result};
 use crate::event::{EventSender, PanelEvent};
+use crate::protocol::Command;
 use crate::transport::command::CommandEngine;
 use crate::transport::discovery;
 
@@ -67,7 +68,7 @@ impl DirectTcpTransport {
         let password = &config.panel_password;
         let code_len = password.len().max(4);
         let padded_password = format!("{:0>width$}", password, width = code_len);
-        let rmt_cmd = format!("RMT={}", padded_password);
+        let rmt_cmd = Command::Rmt { password: padded_password.clone() };
 
         debug!("Sending RMT authentication");
         let response = command_engine.send_command(&rmt_cmd, false).await?;
@@ -89,7 +90,7 @@ impl DirectTcpTransport {
         debug!("RMT authentication successful");
 
         // Start encrypted session
-        let lcl_response = command_engine.send_command("LCL", false).await?;
+        let lcl_response = command_engine.send_command(&Command::Lcl, false).await?;
         if !lcl_response.contains("ACK") {
             return Err(RiscoError::InvalidResponse {
                 details: format!("LCL response: {}", lcl_response),
@@ -114,7 +115,7 @@ impl DirectTcpTransport {
             // Reset validity flag before each attempt
             *command_engine.crypt_key_valid.write().await = None;
 
-            let crypt_test_result = command_engine.send_command("CUSTLST?", false).await;
+            let crypt_test_result = command_engine.send_command(&Command::CustomerList, false).await;
             let crypt_valid = {
                 let valid = command_engine.crypt_key_valid.read().await;
                 valid.unwrap_or(false)
@@ -168,7 +169,7 @@ impl DirectTcpTransport {
     }
 
     /// Send a command through the transport.
-    pub async fn send_command(&self, command: &str, is_prog_cmd: bool) -> Result<String> {
+    pub async fn send_command(&self, command: &Command, is_prog_cmd: bool) -> Result<String> {
         self.command_engine.send_command(command, is_prog_cmd).await
     }
 

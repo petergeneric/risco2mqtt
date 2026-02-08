@@ -13,6 +13,7 @@ use tracing::{debug, error, warn};
 
 use crate::crypto::RiscoCrypt;
 use crate::error::{PanelErrorCode, RiscoError, Result};
+use crate::protocol::Command;
 
 /// Tracks pending commands and routes responses back to callers via oneshot channels.
 pub struct CommandEngine {
@@ -140,7 +141,9 @@ impl CommandEngine {
     /// Send a command and wait for a response.
     ///
     /// Retries up to 2 times on timeout with a fresh sequence ID.
-    pub async fn send_command(&self, command_str: &str, is_prog_cmd: bool) -> Result<String> {
+    pub async fn send_command(&self, command: &Command, is_prog_cmd: bool) -> Result<String> {
+        let command_str = command.to_wire_string();
+
         // Wait while in prog mode and this is not a prog command
         while *self.in_prog.read().await && !is_prog_cmd {
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -173,7 +176,7 @@ impl CommandEngine {
             // Encrypt and send
             let encoded = {
                 let mut crypt = self.crypt.lock().await;
-                crypt.encode_command(command_str, &cmd_id_str, None)
+                crypt.encode_command(&command_str, &cmd_id_str, None)
             };
 
             {
@@ -205,7 +208,7 @@ impl CommandEngine {
                     if attempt == max_attempts {
                         debug!("Command timeout after {} attempts: {} {}", max_attempts, cmd_id_str, command_str);
                         return Err(RiscoError::CommandTimeout {
-                            command: command_str.to_string(),
+                            command: command_str.clone(),
                         });
                     }
                     warn!("Command timeout (attempt {}/{}): {}", attempt, max_attempts, command_str);
@@ -215,16 +218,17 @@ impl CommandEngine {
 
         // Should not reach here, but just in case
         Err(RiscoError::CommandTimeout {
-            command: command_str.to_string(),
+            command: command_str,
         })
     }
 
     /// Send an ACK for an unsolicited panel message.
     pub async fn send_ack(&self, id_str: &str) -> Result<()> {
         debug!("Sending ACK for id {}", id_str);
+        let ack_str = Command::Ack.to_wire_string();
         let encoded = {
             let mut crypt = self.crypt.lock().await;
-            crypt.encode_command("ACK", id_str, None)
+            crypt.encode_command(&ack_str, id_str, None)
         };
 
         let mut writer = self.writer.lock().await;
@@ -241,18 +245,19 @@ impl CommandEngine {
     /// - `Some(false)` forces unencrypted (used for DCN when crypt key may be wrong)
     /// - `Some(true)` forces encrypted
     /// - `None` uses the current crypt state
-    pub async fn send_raw(&self, command_str: &str, force_crypt: Option<bool>) -> Result<()> {
+    pub async fn send_raw(&self, command: &Command, force_crypt: Option<bool>) -> Result<()> {
         if !*self.connected.read().await {
             return Err(RiscoError::Disconnected);
         }
 
+        let command_str = command.to_wire_string();
         let cmd_id_str = {
             let seq = self.sequence_id.lock().await;
             format!("{:02}", *seq)
         };
         let encoded = {
             let mut crypt = self.crypt.lock().await;
-            crypt.encode_command(command_str, &cmd_id_str, force_crypt)
+            crypt.encode_command(&command_str, &cmd_id_str, force_crypt)
         };
 
         let mut writer = self.writer.lock().await;
@@ -325,7 +330,7 @@ impl CommandEngine {
             let mut crypt = self.crypt.lock().await;
             crypt.set_crypt_enabled(false);
         }
-        let _ = self.send_raw("DCN", Some(false)).await;
+        let _ = self.send_raw(&Command::Dcn, Some(false)).await;
         self.set_connected(false).await;
         Ok(())
     }

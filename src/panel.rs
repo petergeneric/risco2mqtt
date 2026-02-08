@@ -15,7 +15,7 @@ use crate::devices::system::{MBSystem, SystemStatusFlags};
 use crate::devices::zone::Zone;
 use crate::error::{RiscoError, Result};
 use crate::event::{event_channel, EventReceiver, EventSender, PanelEvent};
-use crate::protocol::parse_status_update;
+use crate::protocol::{parse_status_update, Command};
 
 /// Cached device data from a previous successful discovery.
 ///
@@ -353,7 +353,7 @@ impl RiscoPanel {
             loop {
                 tokio::select! {
                     _ = sleep(Duration::from_millis(watchdog_ms)) => {
-                        match engine.send_command("CLOCK", false).await {
+                        match engine.send_command(&Command::Clock, false).await {
                             Ok(_) => {}
                             Err(RiscoError::CommandTimeout { .. }) => {
                                 warn!("Watchdog CLOCK timed out, will retry");
@@ -441,10 +441,7 @@ impl RiscoPanel {
         }
         drop(partitions);
 
-        let cmd = match arm_type {
-            ArmType::Away => format!("ARM={}", id),
-            ArmType::Stay => format!("STAY={}", id),
-        };
+        let cmd = Command::arm(id, arm_type);
 
         let response = self.comm.send_command(&cmd, false).await?;
         Ok(response == "ACK")
@@ -465,7 +462,7 @@ impl RiscoPanel {
         }
         drop(partitions);
 
-        let response = self.comm.send_command(&format!("DISARM={}", id), false).await?;
+        let response = self.comm.send_command(&Command::DisarmPartition { id }, false).await?;
         Ok(response == "ACK")
     }
 
@@ -479,7 +476,7 @@ impl RiscoPanel {
         }
         drop(zones);
 
-        let response = self.comm.send_command(&format!("ZBYPAS={}", id), false).await?;
+        let response = self.comm.send_command(&Command::ToggleBypassZone { id }, false).await?;
         Ok(response == "ACK")
     }
 
@@ -493,7 +490,7 @@ impl RiscoPanel {
         }
         drop(outputs);
 
-        let response = self.comm.send_command(&format!("ACTUO{}", id), false).await?;
+        let response = self.comm.send_command(&Command::ToggleOutput { id }, false).await?;
         Ok(response == "ACK")
     }
 
