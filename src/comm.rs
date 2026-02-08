@@ -617,9 +617,10 @@ fn is_n19(response: &str) -> bool {
 
 /// Get the local GMT timezone offset string (e.g., "+02:00").
 fn local_gmt_offset() -> String {
-    // Use chrono-free approach: calculate from system timezone
-    // For now, return UTC as default. In production, use system timezone.
-    let _now = std::time::SystemTime::now();
-    // Simple implementation: UTC offset
-    "+00:00".to_string()
+    use chrono::Offset;
+    let offset = chrono::Local::now().offset().fix();
+    let secs = offset.local_minus_utc();
+    let hours = secs / 3600;
+    let mins = (secs.abs() % 3600) / 60;
+    format!("{:+03}:{:02}", hours, mins)
 }
