@@ -5,6 +5,10 @@ edition = "2024"
 description = "MQTT communication bridge for Risco alarm control panels"
 license = "MIT"
 
+[lib]
+name = "risco_lan_bridge"
+path = "src/lib.rs"
+
 [[bin]]
 name = "risco2mqtt"
 path = "src/main.rs"
