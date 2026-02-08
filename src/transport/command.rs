@@ -36,8 +36,6 @@ pub struct CommandEngine {
     last_crc_error: Arc<Mutex<Option<Instant>>>,
     /// Whether transport is connected
     connected: Arc<RwLock<bool>>,
-    /// Socket mode (for timeout selection)
-    is_proxy: bool,
     /// Last misunderstood data from bad CRC
     last_misunderstood: Arc<Mutex<Option<String>>>,
     /// Raw bytes of the last received message (before decryption)
@@ -55,7 +53,6 @@ impl CommandEngine {
     pub fn new(
         writer: OwnedWriteHalf,
         crypt: RiscoCrypt,
-        is_proxy: bool,
     ) -> Self {
         Self {
             sequence_id: Arc::new(Mutex::new(1)),
@@ -68,7 +65,6 @@ impl CommandEngine {
             bad_crc_count: Arc::new(Mutex::new(0)),
             last_crc_error: Arc::new(Mutex::new(None)),
             connected: Arc::new(RwLock::new(true)),
-            is_proxy,
             last_misunderstood: Arc::new(Mutex::new(None)),
             last_received_buffer: Arc::new(Mutex::new(None)),
             crypt_key_valid: Arc::new(RwLock::new(None)),
@@ -276,13 +272,7 @@ impl CommandEngine {
     /// Get the appropriate timeout duration based on current mode.
     async fn get_timeout(&self) -> Duration {
         if *self.in_crypt_test.read().await {
-            if self.is_proxy {
-                Duration::from_secs(5)
-            } else {
-                Duration::from_millis(500)
-            }
-        } else if *self.discovering.read().await && self.is_proxy {
-            Duration::from_millis(100)
+            Duration::from_millis(500)
         } else if *self.in_prog.read().await {
             Duration::from_secs(29)
         } else {

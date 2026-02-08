@@ -53,7 +53,7 @@ pub mod protocol;
 pub mod transport;
 
 // Re-exports for convenience
-pub use config::{ArmType, PanelConfig, PanelConfigBuilder, PanelType, SocketMode};
+pub use config::{ArmType, PanelConfig, PanelConfigBuilder, PanelType};
 pub use error::{RiscoError, Result};
 pub use event::{EventReceiver, PanelEvent};
 pub use panel::RiscoPanel;

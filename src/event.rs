@@ -52,10 +52,6 @@ pub enum PanelEvent {
     /// Raw unsolicited data from the panel (ZSTT, PSTT, OSTT, SSTT messages).
     /// The transport layer emits this so the panel can update cached device state.
     PanelData(String),
-    /// Incoming remote connection from RiscoCloud (proxy mode)
-    IncomingRemoteConnection,
-    /// Remote connection ended (proxy mode)
-    EndIncomingRemoteConnection,
 }
 
 /// Type alias for the broadcast sender.

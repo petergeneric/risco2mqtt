@@ -106,15 +106,6 @@ pub fn compare_version(v1: &str, v2: &str) -> i32 {
     (parts1.len() as i32) - (parts2.len() as i32)
 }
 
-/// Socket connection mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SocketMode {
-    /// Direct TCP connection to the panel (default port 1000)
-    Direct,
-    /// Proxy mode: middleman between panel and RiscoCloud
-    Proxy,
-}
-
 /// Arm type for partition arming commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArmType {
@@ -137,8 +128,6 @@ pub struct PanelConfig {
     pub panel_password: String,
     /// Panel encryption ID (0001-9999)
     pub panel_id: u16,
-    /// Connection mode
-    pub socket_mode: SocketMode,
     /// Whether to auto-discover panel ID and password if wrong
     pub discover_code: bool,
     /// Whether to auto-connect on creation
@@ -147,8 +136,6 @@ pub struct PanelConfig {
     pub auto_discover: bool,
     /// Whether to disable RiscoCloud on the panel
     pub disable_risco_cloud: bool,
-    /// Whether to enable RiscoCloud on the panel
-    pub enable_risco_cloud: bool,
     /// Reconnection delay in milliseconds (base delay for exponential backoff)
     pub reconnect_delay_ms: u64,
     /// Maximum number of connection retries on transient errors (0 = no retries)
@@ -157,12 +144,6 @@ pub struct PanelConfig {
     pub ntp_server: String,
     /// NTP port
     pub ntp_port: String,
-    /// Proxy mode: listening port for panel connections
-    pub listening_port: u16,
-    /// Proxy mode: cloud server port
-    pub cloud_port: u16,
-    /// Proxy mode: cloud server URL
-    pub cloud_url: String,
     /// Watchdog CLOCK interval in milliseconds (default: 5000)
     pub watchdog_interval_ms: u64,
 }
@@ -175,19 +156,14 @@ impl Default for PanelConfig {
             panel_port: 1000,
             panel_password: "5678".to_string(),
             panel_id: 1,
-            socket_mode: SocketMode::Direct,
             discover_code: true,
             auto_connect: true,
             auto_discover: true,
             disable_risco_cloud: true,
-            enable_risco_cloud: false,
             reconnect_delay_ms: 10000,
             max_connect_retries: 3,
             ntp_server: "pool.ntp.org".to_string(),
             ntp_port: "123".to_string(),
-            listening_port: 33000,
-            cloud_port: 33000,
-            cloud_url: "www.riscocloud.com".to_string(),
             watchdog_interval_ms: 5000,
         }
     }
@@ -232,11 +208,6 @@ impl PanelConfigBuilder {
         self
     }
 
-    pub fn socket_mode(mut self, mode: SocketMode) -> Self {
-        self.config.socket_mode = mode;
-        self
-    }
-
     pub fn discover_code(mut self, discover: bool) -> Self {
         self.config.discover_code = discover;
         self
@@ -257,11 +228,6 @@ impl PanelConfigBuilder {
         self
     }
 
-    pub fn enable_risco_cloud(mut self, enable: bool) -> Self {
-        self.config.enable_risco_cloud = enable;
-        self
-    }
-
     pub fn reconnect_delay_ms(mut self, ms: u64) -> Self {
         self.config.reconnect_delay_ms = ms;
         self
@@ -279,21 +245,6 @@ impl PanelConfigBuilder {
 
     pub fn ntp_port(mut self, port: impl Into<String>) -> Self {
         self.config.ntp_port = port.into();
-        self
-    }
-
-    pub fn listening_port(mut self, port: u16) -> Self {
-        self.config.listening_port = port;
-        self
-    }
-
-    pub fn cloud_port(mut self, port: u16) -> Self {
-        self.config.cloud_port = port;
-        self
-    }
-
-    pub fn cloud_url(mut self, url: impl Into<String>) -> Self {
-        self.config.cloud_url = url.into();
         self
     }
 

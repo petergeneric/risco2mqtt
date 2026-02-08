@@ -7,7 +7,6 @@ pub const ETX: u8 = 0x03; // End of frame
 pub const DLE: u8 = 0x10; // Data Link Escape (byte stuffing)
 pub const CRYPT: u8 = 0x11; // Encryption indicator
 pub const SEP: u8 = 0x17; // Separator between command and CRC
-pub const CLOUD: u8 = 0x13; // Cloud data indicator (byte 19)
 
 /// CRC-16/ARC lookup table (256 entries).
 /// Decoded from the base64-encoded JSON array in the original JS source.

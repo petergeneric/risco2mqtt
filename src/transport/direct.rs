@@ -44,7 +44,7 @@ impl DirectTcpTransport {
 
         let (reader, writer) = stream.into_split();
         let crypt = RiscoCrypt::new(config.panel_id);
-        let command_engine = Arc::new(CommandEngine::new(writer, crypt, false));
+        let command_engine = Arc::new(CommandEngine::new(writer, crypt));
 
         // Spawn reader task
         let reader_handle = spawn_reader_task(

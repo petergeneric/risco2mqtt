@@ -4,7 +4,6 @@
 pub mod command;
 pub mod direct;
 pub mod discovery;
-pub mod proxy;
 
 use crate::error::Result;
 

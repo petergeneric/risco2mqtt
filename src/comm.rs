@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, info, warn};
 
-use crate::config::{panel_limits, PanelConfig, PanelType, SocketMode};
+use crate::config::{panel_limits, PanelConfig, PanelType};
 use crate::constants::{PanelHwType, timezone_index_for_offset};
 use crate::devices::output::{Output, OutputType};
 use crate::devices::partition::Partition;
@@ -17,7 +17,6 @@ use crate::event::EventSender;
 use crate::protocol::{is_ack, parse_tab_separated_labels, parse_tab_separated_trimmed, parse_value_after_eq};
 use crate::transport::command::CommandEngine;
 use crate::transport::direct::DirectTcpTransport;
-use crate::transport::proxy::ProxyTcpTransport;
 
 /// High-level communication handler.
 ///
@@ -26,7 +25,6 @@ use crate::transport::proxy::ProxyTcpTransport;
 pub struct RiscoComm {
     config: PanelConfig,
     direct_transport: Option<DirectTcpTransport>,
-    proxy_transport: Option<ProxyTcpTransport>,
     event_tx: EventSender,
     firmware_version: Option<String>,
     max_zones: u32,
@@ -40,7 +38,6 @@ impl RiscoComm {
         Self {
             config,
             direct_transport: None,
-            proxy_transport: None,
             event_tx,
             firmware_version: None,
             max_zones: mz,
@@ -53,18 +50,9 @@ impl RiscoComm {
     pub async fn connect(&mut self) -> Result<()> {
         info!("Starting connection to panel");
 
-        match self.config.socket_mode {
-            SocketMode::Direct => {
-                let transport =
-                    DirectTcpTransport::connect(&self.config, self.event_tx.clone()).await?;
-                self.direct_transport = Some(transport);
-            }
-            SocketMode::Proxy => {
-                let transport =
-                    ProxyTcpTransport::connect(&self.config, self.event_tx.clone()).await?;
-                self.proxy_transport = Some(transport);
-            }
-        }
+        let transport =
+            DirectTcpTransport::connect(&self.config, self.event_tx.clone()).await?;
+        self.direct_transport = Some(transport);
 
         // Propagate any discovered panel ID from the crypto engine back into
         // the config so it persists across reconnection attempts.
@@ -108,8 +96,6 @@ impl RiscoComm {
     pub async fn send_command(&self, command: &str, is_prog_cmd: bool) -> Result<String> {
         if let Some(ref transport) = self.direct_transport {
             transport.send_command(command, is_prog_cmd).await
-        } else if let Some(ref transport) = self.proxy_transport {
-            transport.send_command(command, is_prog_cmd).await
         } else {
             Err(RiscoError::Disconnected)
         }
@@ -118,8 +104,6 @@ impl RiscoComm {
     /// Get the command engine for direct operations.
     pub(crate) fn engine(&self) -> Result<&Arc<CommandEngine>> {
         if let Some(ref t) = self.direct_transport {
-            Ok(t.engine())
-        } else if let Some(ref t) = self.proxy_transport {
             Ok(t.engine())
         } else {
             Err(RiscoError::Disconnected)
@@ -193,7 +177,7 @@ impl RiscoComm {
         let mut commands = Vec::new();
         debug!("Checking panel configuration");
 
-        if self.config.disable_risco_cloud && !self.config.enable_risco_cloud {
+        if self.config.disable_risco_cloud {
             // Check RiscoCloud status
             let response = self.send_command("ELASEN?", false).await?;
             let cloud_enabled = parse_value_after_eq(&response).trim() == "1";
@@ -241,13 +225,6 @@ impl RiscoComm {
             if panel_ntp_proto != "1" {
                 commands.push("INTPPROT=1".to_string());
                 debug!("Prepare panel for enabling NTP");
-            }
-        } else if self.config.enable_risco_cloud && !self.config.disable_risco_cloud {
-            let response = self.send_command("ELASEN?", false).await?;
-            let cloud_enabled = parse_value_after_eq(&response).trim() == "1";
-            if !cloud_enabled {
-                commands.push("ELASEN=1".to_string());
-                debug!("Enabling RiscoCloud");
             }
         }
 
@@ -598,11 +575,7 @@ impl RiscoComm {
         if let Some(ref transport) = self.direct_transport {
             transport.disconnect().await?;
         }
-        if let Some(ref transport) = self.proxy_transport {
-            transport.disconnect().await?;
-        }
         self.direct_transport = None;
-        self.proxy_transport = None;
         Ok(())
     }
 
