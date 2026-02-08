@@ -181,6 +181,10 @@ impl Partition {
     pub fn is_duress(&self) -> bool { self.status.contains(PartitionStatusFlags::DURESS) }
     pub fn is_false_code(&self) -> bool { self.status.contains(PartitionStatusFlags::FALSE_CODE) }
     pub fn is_panic(&self) -> bool { self.status.contains(PartitionStatusFlags::PANIC) }
+    pub fn is_grp_a_armed(&self) -> bool { self.status.contains(PartitionStatusFlags::GRP_A_ARMED) }
+    pub fn is_grp_b_armed(&self) -> bool { self.status.contains(PartitionStatusFlags::GRP_B_ARMED) }
+    pub fn is_grp_c_armed(&self) -> bool { self.status.contains(PartitionStatusFlags::GRP_C_ARMED) }
+    pub fn is_grp_d_armed(&self) -> bool { self.status.contains(PartitionStatusFlags::GRP_D_ARMED) }
 }
 
 #[cfg(test)]
@@ -206,6 +210,33 @@ mod tests {
     fn test_partition_status_empty() {
         let flags = PartitionStatusFlags::from_status_str("-----------------");
         assert_eq!(flags, PartitionStatusFlags::empty());
+    }
+
+    #[test]
+    fn test_partition_group_armed_flags() {
+        // Group flags are at positions 13-16 (chars '1','2','3','4')
+        let flags = PartitionStatusFlags::from_status_str("-------------1234");
+        assert!(flags.contains(PartitionStatusFlags::GRP_A_ARMED));
+        assert!(flags.contains(PartitionStatusFlags::GRP_B_ARMED));
+        assert!(flags.contains(PartitionStatusFlags::GRP_C_ARMED));
+        assert!(flags.contains(PartitionStatusFlags::GRP_D_ARMED));
+
+        // Only group A armed
+        let flags = PartitionStatusFlags::from_status_str("-------------1---");
+        assert!(flags.contains(PartitionStatusFlags::GRP_A_ARMED));
+        assert!(!flags.contains(PartitionStatusFlags::GRP_B_ARMED));
+        assert!(!flags.contains(PartitionStatusFlags::GRP_C_ARMED));
+        assert!(!flags.contains(PartitionStatusFlags::GRP_D_ARMED));
+    }
+
+    #[test]
+    fn test_partition_group_armed_accessors() {
+        let mut part = Partition::new(1);
+        part.update_status("-------------12--");
+        assert!(part.is_grp_a_armed());
+        assert!(part.is_grp_b_armed());
+        assert!(!part.is_grp_c_armed());
+        assert!(!part.is_grp_d_armed());
     }
 
     #[test]

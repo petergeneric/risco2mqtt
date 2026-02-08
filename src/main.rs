@@ -139,6 +139,7 @@ fn parse_panel_type(s: &str) -> Result<PanelType> {
         "wicomm" => Ok(PanelType::WiComm),
         "wicommpro" => Ok(PanelType::WiCommPro),
         "lightsys" => Ok(PanelType::LightSys),
+        "lightsysplus" => Ok(PanelType::LightSysPlus),
         "prosysplus" => Ok(PanelType::ProsysPlus),
         "gtplus" => Ok(PanelType::GTPlus),
         other => anyhow::bail!("Unknown panel type: {other}"),
@@ -264,6 +265,8 @@ struct MqttCommand {
     zone: Option<u32>,
     #[serde(default)]
     partition: Option<u32>,
+    #[serde(default)]
+    group: Option<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -548,6 +551,18 @@ async fn handle_panel_event(
             if became_set.contains(PartitionStatusFlags::TROUBLE) {
                 publish_partition_event(client, topic, "PART_TROUBLE", partition_id, None).await;
             }
+            if became_set.contains(PartitionStatusFlags::GRP_A_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_A_ARMED", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::GRP_B_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_B_ARMED", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::GRP_C_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_C_ARMED", partition_id, None).await;
+            }
+            if became_set.contains(PartitionStatusFlags::GRP_D_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_D_ARMED", partition_id, None).await;
+            }
 
             // Flags that became UNSET
             if became_unset.contains(PartitionStatusFlags::ALARM) {
@@ -573,6 +588,18 @@ async fn handle_panel_event(
             }
             if became_unset.contains(PartitionStatusFlags::TROUBLE) {
                 publish_partition_event(client, topic, "PART_TROUBLE_OK", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::GRP_A_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_A_DISARMED", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::GRP_B_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_B_DISARMED", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::GRP_C_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_C_DISARMED", partition_id, None).await;
+            }
+            if became_unset.contains(PartitionStatusFlags::GRP_D_ARMED) {
+                publish_partition_event(client, topic, "PART_ARMSTATE_GROUP_D_DISARMED", partition_id, None).await;
             }
         }
 
@@ -684,6 +711,39 @@ async fn handle_command(
                 }
                 Err(e) => {
                     error!("DISARM partition {id} failed: {e}");
+                    false
+                }
+            };
+            publish_cmd_ack(client, topic, success, src_json, None).await;
+        }
+
+        "ARM_GROUP" => {
+            let id = cmd.partition.unwrap_or(1);
+            let group = match cmd.group {
+                Some(g) if (1..=4).contains(&g) => g,
+                Some(g) => {
+                    warn!("ARM_GROUP: invalid group {g} (must be 1-4)");
+                    publish_cmd_ack(client, topic, false, src_json, None).await;
+                    return;
+                }
+                None => {
+                    warn!("ARM_GROUP: missing group");
+                    publish_cmd_ack(client, topic, false, src_json, None).await;
+                    return;
+                }
+            };
+            info!("Command: ARM_GROUP partition {id} group {group}");
+            let success = match panel.group_arm_partition(id, group).await {
+                Ok(true) => {
+                    info!("ARM_GROUP partition {id} group {group}: success");
+                    true
+                }
+                Ok(false) => {
+                    warn!("ARM_GROUP partition {id} group {group}: panel returned NACK");
+                    false
+                }
+                Err(e) => {
+                    error!("ARM_GROUP partition {id} group {group} failed: {e}");
                     false
                 }
             };

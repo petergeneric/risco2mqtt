@@ -19,6 +19,8 @@ pub enum PanelType {
     WiCommPro,
     /// LightSys (RP432): 32-50 zones (FW dependent), 4 partitions, 14-32 outputs (FW dependent)
     LightSys,
+    /// LightSys Plus (RP432MP): 512 zones, 32 partitions, 196 outputs
+    LightSysPlus,
     /// ProsysPlus (RP512): 64-128 zones (FW dependent), 32 partitions, 262 outputs
     ProsysPlus,
     /// GTPlus (RP512): same as ProsysPlus
@@ -34,6 +36,7 @@ impl PanelType {
             Self::WiComm => PanelHwType::RW232,
             Self::WiCommPro => PanelHwType::RW332,
             Self::LightSys => PanelHwType::RP432,
+            Self::LightSysPlus => PanelHwType::RP432MP,
             Self::ProsysPlus | Self::GTPlus => PanelHwType::RP512,
         }
     }
@@ -50,6 +53,7 @@ impl PanelType {
             PanelHwType::RW232 => Self::WiComm,
             PanelHwType::RW332 => Self::WiCommPro,
             PanelHwType::RP432 => Self::LightSys,
+            PanelHwType::RP432MP => Self::LightSysPlus,
             PanelHwType::RP512 => Self::ProsysPlus,
         }
     }
@@ -72,6 +76,7 @@ pub fn panel_limits(panel_type: PanelType, firmware: Option<&str>) -> (u32, u32,
                 (32, 4, 14)
             }
         }
+        PanelType::LightSysPlus => (512, 32, 196),
         PanelType::ProsysPlus | PanelType::GTPlus => {
             // FW >= 1.2.0.7: 128 zones; else 64 zones
             let max_zones = if firmware.is_some_and(|fw| compare_version(fw, "1.2.0.7") >= 0) {
@@ -335,6 +340,15 @@ mod tests {
     }
 
     #[test]
+    fn test_lightsysplus_panel() {
+        assert_eq!(panel_limits(PanelType::LightSysPlus, None), (512, 32, 196));
+        // Firmware version should not change limits for LightSysPlus
+        assert_eq!(panel_limits(PanelType::LightSysPlus, Some("1.0")), (512, 32, 196));
+        assert_eq!(PanelType::LightSysPlus.hardware_type(), PanelHwType::RP432MP);
+        assert_eq!(PanelType::from_hw_type(PanelHwType::RP432MP), PanelType::LightSysPlus);
+    }
+
+    #[test]
     fn test_panel_type_hw_type_roundtrip() {
         // For all types except GTPlus (which shares RP512 with ProsysPlus),
         // from_hw_type(hardware_type()) should return the same variant.
@@ -343,6 +357,7 @@ mod tests {
         assert_eq!(PanelType::from_hw_type(PanelType::WiComm.hardware_type()), PanelType::WiComm);
         assert_eq!(PanelType::from_hw_type(PanelType::WiCommPro.hardware_type()), PanelType::WiCommPro);
         assert_eq!(PanelType::from_hw_type(PanelType::LightSys.hardware_type()), PanelType::LightSys);
+        assert_eq!(PanelType::from_hw_type(PanelType::LightSysPlus.hardware_type()), PanelType::LightSysPlus);
         // GTPlus shares RP512 with ProsysPlus, so from_hw_type defaults to ProsysPlus
         assert_eq!(PanelType::from_hw_type(PanelType::GTPlus.hardware_type()), PanelType::ProsysPlus);
     }

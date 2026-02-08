@@ -150,7 +150,7 @@ impl RiscoComm {
     /// Get the firmware version (only for LightSys and ProsysPlus/GTPlus).
     async fn get_firmware_version(&mut self) -> Result<()> {
         match self.config.panel_type {
-            PanelType::LightSys | PanelType::ProsysPlus | PanelType::GTPlus => {
+            PanelType::LightSys | PanelType::LightSysPlus | PanelType::ProsysPlus | PanelType::GTPlus => {
                 match self.send_command(&Command::FirmwareVersion, false).await {
                     Ok(response) => {
                         let version_full = parse_value_after_eq(&response);

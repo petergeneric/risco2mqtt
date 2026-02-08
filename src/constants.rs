@@ -197,6 +197,7 @@ pub enum PanelHwType {
     RW232,
     RW332,
     RP432,
+    RP432MP,
     RP512,
 }
 
@@ -210,6 +211,7 @@ impl PanelHwType {
             "RW232" => Some(Self::RW232),
             "RW332" => Some(Self::RW332),
             "RP432" => Some(Self::RP432),
+            "RP432MP" => Some(Self::RP432MP),
             "RP512" => Some(Self::RP512),
             _ => None,
         }
@@ -222,6 +224,7 @@ impl PanelHwType {
             Self::RW232 => "RW232",
             Self::RW332 => "RW332",
             Self::RP432 => "RP432",
+            Self::RP432MP => "RP432MP",
             Self::RP512 => "RP512",
         }
     }
@@ -236,6 +239,13 @@ mod tests {
         assert_eq!(PanelHwType::from_name("RW032:V2"), Some(PanelHwType::RW032));
         assert_eq!(PanelHwType::from_name("RP512:V3"), Some(PanelHwType::RP512));
         assert_eq!(PanelHwType::from_name("RW132"), Some(PanelHwType::RW132));
+    }
+
+    #[test]
+    fn test_panel_hw_type_rp432mp() {
+        assert_eq!(PanelHwType::from_name("RP432MP"), Some(PanelHwType::RP432MP));
+        assert_eq!(PanelHwType::from_name("RP432MP:V1"), Some(PanelHwType::RP432MP));
+        assert_eq!(PanelHwType::RP432MP.as_str(), "RP432MP");
     }
 
     #[test]

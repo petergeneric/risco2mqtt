@@ -215,6 +215,9 @@ pub enum RiscoError {
     #[error("Partition not ready for arming: id={id}")]
     PartitionNotReady { id: u32 },
 
+    #[error("Invalid group ID: {group} (must be 1-4)")]
+    InvalidGroupId { group: u8 },
+
     #[error("Channel closed")]
     ChannelClosed,
 }

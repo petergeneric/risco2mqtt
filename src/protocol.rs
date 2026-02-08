@@ -84,6 +84,8 @@ pub enum Command {
     StayPartition { id: u32 },
     /// DISARM=<id> — Disarm partition
     DisarmPartition { id: u32 },
+    /// GARM*{group}={id} — Group arm partition (group 1-4 = A-D)
+    GroupArmPartition { group: u8, id: u32 },
     /// ZBYPAS=<id> — Toggle zone bypass
     ToggleBypassZone { id: u32 },
     /// ACTUO<id> — Toggle output
@@ -137,6 +139,7 @@ impl Command {
             Command::ArmPartition { id } => format!("ARM={}", id),
             Command::StayPartition { id } => format!("STAY={}", id),
             Command::DisarmPartition { id } => format!("DISARM={}", id),
+            Command::GroupArmPartition { group, id } => format!("GARM*{}={}", group, id),
             Command::ToggleBypassZone { id } => format!("ZBYPAS={}", id),
             Command::ToggleOutput { id } => format!("ACTUO{}", id),
             Command::Raw(s) => s.clone(),
@@ -231,6 +234,22 @@ mod tests {
         assert_eq!(
             Command::ToggleOutput { id: 5 }.to_wire_string(),
             "ACTUO5"
+        );
+    }
+
+    #[test]
+    fn test_group_arm_partition_wire_format() {
+        assert_eq!(
+            Command::GroupArmPartition { group: 1, id: 1 }.to_wire_string(),
+            "GARM*1=1"
+        );
+        assert_eq!(
+            Command::GroupArmPartition { group: 4, id: 3 }.to_wire_string(),
+            "GARM*4=3"
+        );
+        assert_eq!(
+            Command::GroupArmPartition { group: 2, id: 10 }.to_wire_string(),
+            "GARM*2=10"
         );
     }
 

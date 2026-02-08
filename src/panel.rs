@@ -429,7 +429,7 @@ impl RiscoPanel {
         }
 
         let part = &partitions[(id - 1) as usize];
-        if !part.is_ready() && part.is_open() {
+        if !part.is_ready() || part.is_open() {
             return Err(RiscoError::PartitionNotReady { id });
         }
 
@@ -444,6 +444,35 @@ impl RiscoPanel {
         let cmd = Command::arm(id, arm_type);
 
         let response = self.comm.send_command(&cmd, false).await?;
+        Ok(response == "ACK")
+    }
+
+    /// Group arm a partition (groups 1-4 correspond to A-D).
+    pub async fn group_arm_partition(&self, id: u32, group: u8) -> Result<bool> {
+        debug!("Group arming partition {} group {}", id, group);
+        if !(1..=4).contains(&group) {
+            return Err(RiscoError::InvalidGroupId { group });
+        }
+        let partitions = self.partitions.read().await;
+        let max = partitions.len() as u32;
+        if id == 0 || id > max {
+            return Err(RiscoError::InvalidDeviceId { id, max });
+        }
+
+        let part = &partitions[(id - 1) as usize];
+        if !part.is_ready() || part.is_open() {
+            return Err(RiscoError::PartitionNotReady { id });
+        }
+
+        if part.is_armed() || part.is_home_stay() {
+            return Ok(true); // Already armed
+        }
+        drop(partitions);
+
+        let response = self
+            .comm
+            .send_command(&Command::GroupArmPartition { group, id }, false)
+            .await?;
         Ok(response == "ACK")
     }
 
