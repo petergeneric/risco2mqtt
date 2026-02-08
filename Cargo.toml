@@ -1,8 +1,8 @@
 [package]
-name = "risco-lan-bridge"
+name = "risco2mqtt"
 version = "0.20.0"
 edition = "2024"
-description = "Direct TCP/IP communication with Risco alarm control panels"
+description = "MQTT communication bridge for Risco alarm control panels"
 license = "MIT"
 
 [[bin]]

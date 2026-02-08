@@ -6,7 +6,6 @@
 ~/*
 .test/*
 /.idea/
-node_modules/
 /target/
 
 config.toml

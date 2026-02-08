@@ -4,12 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-risco-lan-bridge is a Rust library (with legacy Node.js code) for direct TCP/IP communication with Risco alarm control panels (Agility, WiComm, WiCommPro, LightSYS, ProsysPlus, GTPlus), bypassing the RiscoCloud service. The Rust rewrite includes `risco2mqtt`, an MQTT bridge binary.
+risco2mqtt is a Rust library for direct TCP/IP communication with Risco alarm control panels (Agility, WiComm, WiCommPro, LightSYS, ProsysPlus, GTPlus), bypassing the RiscoCloud service, bridging them to high-level operations via MQTT. The original TypeScript reference implementation/documentation is available as a git submodule in `risco-lan-bridge/`.
 
 ## Commands
 
 ```bash
-# Rust (primary)
 cargo build                          # debug build
 cargo build --release                # release build
 cargo test                           # run all tests
@@ -17,15 +16,11 @@ cargo test <test_name>               # run a single test
 cargo clippy                         # lint
 cargo check                          # quick type check
 cargo run -- --config config.toml    # run risco2mqtt bridge
-
-# Node.js (legacy, no build step)
-npm install
-npm test                             # runs node test/run-tests.js
 ```
 
 ## Architecture
 
-The Rust library (`src/`) mirrors the original Node.js architecture (`lib/`) as a layered async system built on tokio:
+The Rust library (`src/`) is a layered async system built on tokio:
 
 ```
 risco2mqtt (src/main.rs) — MQTT bridge binary
@@ -49,8 +44,6 @@ risco2mqtt (src/main.rs) — MQTT bridge binary
 - `protocol.rs` — message parsing, status update routing
 - `error.rs` — `RiscoError` enum with `thiserror`
 - `constants.rs` — CRC lookup table, protocol bytes (STX=0x02, ETX=0x03, DLE=0x10, CRC_MARKER=0x17)
-
-**Legacy Node.js** (`lib/`): Same layered design using EventEmitter. `RiscoPanel.js` has a base class with 6 subclasses. Device models extend Array. Zero npm dependencies.
 
 ## Protocol Notes
 

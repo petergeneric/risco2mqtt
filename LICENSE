@@ -1,8 +1,10 @@
-Package: risco-lan-bridge
+Package: risco-lan-bridge/risco2mqtt
 
 MIT License
 
 Copyright (c) 2021 TJForc
+Copyright (c) 2022 vanackej
+Copyright (c) 2026 Peter Wright
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

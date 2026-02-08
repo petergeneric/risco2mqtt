@@ -1,0 +1,3 @@
+[submodule "risco-lan-bridge"]
+	path = risco-lan-bridge
+	url = https://github.com/vanackej/risco-lan-bridge.git
