@@ -52,7 +52,7 @@ struct LocalRetriever;
 impl jsonschema::Retrieve for LocalRetriever {
     fn retrieve(
         &self,
-        uri: &jsonschema::Uri<&str>,
+        uri: &jsonschema::Uri<String>,
     ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
         let uri_str = uri.as_str();
         let schema_dir = format!("{}/schemas/mqtt/", env!("CARGO_MANIFEST_DIR"));
