@@ -990,6 +990,16 @@ async fn main() -> Result<()> {
     let mqtt_handle = tokio::spawn(async move {
         loop {
             match eventloop.poll().await {
+                Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                    // (Re)subscribe after every broker connect/reconnect.
+                    // rumqttc does not auto-resubscribe, so without this a
+                    // broker restart silently drops our subscription and we
+                    // stop receiving commands.
+                    info!("MQTT: connected, subscribing to {sub_topic}");
+                    if let Err(e) = client_cmds.subscribe(&sub_topic, QoS::AtLeastOnce).await {
+                        error!("Failed to subscribe to {sub_topic}: {e}");
+                    }
+                }
                 Ok(Event::Incoming(Packet::Publish(msg))) => {
                     if msg.topic == sub_topic {
                         let payload = String::from_utf8_lossy(&msg.payload);
@@ -1026,7 +1036,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Task 3: Snapshot timer
+    // Task 3: Snapshot timer — polls panel for fresh status before publishing
     let panel_snap = Arc::clone(&panel);
     let client_snap = client.clone();
     let topic_snap = publish_topic.clone();
@@ -1038,6 +1048,11 @@ async fn main() -> Result<()> {
         loop {
             ticker.tick().await;
             let panel_lock = panel_snap.lock().await;
+            // Poll the panel for current zone/partition status so snapshots
+            // reflect live state rather than a potentially stale cache.
+            if let Err(e) = panel_lock.refresh_status().await {
+                warn!("Status poll failed: {e}");
+            }
             publish_snapshot(&client_snap, &topic_snap, &*panel_lock, &zn_snap).await;
         }
     });

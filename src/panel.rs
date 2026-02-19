@@ -15,7 +15,7 @@ use crate::devices::system::{MBSystem, SystemStatusFlags};
 use crate::devices::zone::Zone;
 use crate::error::{RiscoError, Result};
 use crate::event::{event_channel, EventReceiver, EventSender, PanelEvent};
-use crate::protocol::{parse_status_update, Command};
+use crate::protocol::{parse_status_update, parse_tab_separated_trimmed, Command};
 
 /// Cached device data from a previous successful discovery.
 ///
@@ -636,6 +636,75 @@ impl RiscoPanel {
         } else if data.starts_with("SSTT") {
             self.handle_system_status(data).await;
         }
+    }
+
+    /// Poll the panel for current zone and partition status, updating the
+    /// local cache and emitting change events for any differences.
+    ///
+    /// This is a lightweight alternative to full device discovery — it only
+    /// queries status (ZSTT/PSTT), not labels, types, or configuration.
+    /// Use this to keep the cache fresh between unsolicited panel updates.
+    pub async fn refresh_status(&self) -> Result<()> {
+        let num_zones = self.zones.read().await.len() as u32;
+        let num_parts = self.partitions.read().await.len() as u32;
+
+        // Refresh zone status in batches of 8
+        for batch_start in (0..num_zones).step_by(8) {
+            let min = batch_start + 1;
+            let max = (batch_start + 8).min(num_zones);
+            let response = self.comm.send_command(
+                &Command::ZoneStatus { min, max },
+                false,
+            ).await?;
+            let statuses = parse_tab_separated_trimmed(&response);
+
+            let mut zones = self.zones.write().await;
+            for (j, status_str) in statuses.iter().enumerate() {
+                let idx = (min as usize - 1) + j;
+                if let Some(zone) = zones.get_mut(idx) {
+                    let old_status = zone.status;
+                    let changed = zone.update_status(status_str);
+                    if !changed.is_empty() {
+                        let _ = self.event_tx.send(PanelEvent::ZoneStatusChanged {
+                            zone_id: zone.id,
+                            old_status,
+                            new_status: zone.status,
+                            changed,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Refresh partition status in batches of 8
+        for batch_start in (0..num_parts).step_by(8) {
+            let min = batch_start + 1;
+            let max = (batch_start + 8).min(num_parts);
+            let response = self.comm.send_command(
+                &Command::PartitionStatus { min, max },
+                false,
+            ).await?;
+            let statuses = parse_tab_separated_trimmed(&response);
+
+            let mut partitions = self.partitions.write().await;
+            for (j, status_str) in statuses.iter().enumerate() {
+                let idx = (min as usize - 1) + j;
+                if let Some(part) = partitions.get_mut(idx) {
+                    let old_status = part.status;
+                    let changed = part.update_status(status_str);
+                    if !changed.is_empty() {
+                        let _ = self.event_tx.send(PanelEvent::PartitionStatusChanged {
+                            partition_id: part.id,
+                            old_status,
+                            new_status: part.status,
+                            changed,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Disconnect from the panel and clean up.
