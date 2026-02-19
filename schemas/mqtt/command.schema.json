@@ -16,11 +16,13 @@
         "ARM_HOME_STAY",
         "DISARM",
         "ZONE_BYPASS_ENABLE",
-        "ZONE_BYPASS_DISABLE"
+        "ZONE_BYPASS_DISABLE",
+        "ARM_GROUP"
       ]
     },
     "op_id": { "type": "string" },
     "zone": { "type": "integer" },
-    "partition": { "type": "integer" }
+    "partition": { "type": "integer" },
+    "group": { "type": "integer" }
   }
 }
