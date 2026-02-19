@@ -160,7 +160,7 @@ impl RiscoComm {
                             .next()
                             .unwrap_or(version_full);
                         self.firmware_version = Some(version.to_string());
-                        debug!("Panel firmware version: {}", version);
+                        info!("Panel firmware version: {}", version);
                     }
                     Err(e) => {
                         warn!("Cannot retrieve firmware version: {}", e);
