@@ -214,9 +214,9 @@ impl RiscoPanel {
 
     /// Reconnect to a panel, reusing previously discovered devices.
     ///
-    /// This is intended for use in external reconnection loops (e.g., in
-    /// main.rs). After a connection drops, the caller can extract the device
-    /// snapshots from the old panel and pass them here to skip the expensive
+    /// Makes a single connection attempt without retries. The caller is
+    /// responsible for retry logic (e.g., exponential backoff in main.rs).
+    /// Previously discovered devices are passed in to skip the expensive
     /// device re-discovery phase on reconnection.
     ///
     /// # Arguments
@@ -233,10 +233,6 @@ impl RiscoPanel {
         outputs: Vec<Output>,
         system: Option<MBSystem>,
     ) -> Result<Self> {
-        let max_retries = config.max_connect_retries;
-        let base_delay_ms = config.reconnect_delay_ms;
-        let mut config = config;
-        let mut last_error = None;
         let cached = CachedDevices {
             zones,
             partitions,
@@ -244,47 +240,7 @@ impl RiscoPanel {
             system,
         };
 
-        for attempt in 0..=max_retries {
-            if attempt > 0 {
-                let delay_ms = base_delay_ms * (1 << (attempt - 1).min(4));
-                warn!(
-                    "Reconnection attempt {} failed, retrying in {:.1}s...",
-                    attempt,
-                    delay_ms as f64 / 1000.0
-                );
-                sleep(Duration::from_millis(delay_ms)).await;
-            }
-
-            match Self::try_connect(config.clone(), Some(cached.clone())).await {
-                Ok(panel) => {
-                    let updated_config = panel.comm.config();
-                    if updated_config.panel_id != config.panel_id {
-                        info!(
-                            "Memorizing discovered panel ID: {}",
-                            updated_config.panel_id
-                        );
-                        config.panel_id = updated_config.panel_id;
-                    }
-                    if updated_config.panel_type != config.panel_type {
-                        info!(
-                            "Memorizing discovered panel type: {:?}",
-                            updated_config.panel_type
-                        );
-                        config.panel_type = updated_config.panel_type;
-                    }
-                    return Ok(panel);
-                }
-                Err(e) => {
-                    if !e.is_retryable() || attempt == max_retries {
-                        return Err(e);
-                    }
-                    warn!("Reconnection error (attempt {}): {}", attempt + 1, e);
-                    last_error = Some(e);
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or(RiscoError::Disconnected))
+        Self::try_connect(config, Some(cached)).await
     }
 
     /// Check whether devices have already been discovered (i.e. at least

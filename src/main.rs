@@ -927,9 +927,21 @@ async fn main() -> Result<()> {
                             )
                         };
 
-                        // Outer reconnection loop — retries indefinitely
+                        // Reconnection loop — retries indefinitely with exponential backoff
+                        let mut attempt: u32 = 0;
                         loop {
-                            info!("Attempting panel reconnection...");
+                            if attempt > 0 {
+                                let delay_ms =
+                                    reconnect_delay_ms * (1u64 << (attempt - 1).min(4));
+                                error!(
+                                    "Reconnection attempt {attempt} failed. Retrying in {:.1}s...",
+                                    delay_ms as f64 / 1000.0
+                                );
+                                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                            }
+                            attempt += 1;
+
+                            info!("Attempting panel reconnection (attempt {attempt})...");
                             match RiscoPanel::reconnect(
                                 current_config.clone(),
                                 zones.clone(),
@@ -962,12 +974,7 @@ async fn main() -> Result<()> {
                                     break; // Back to main event loop
                                 }
                                 Err(e) => {
-                                    error!(
-                                        "Reconnection failed: {e}. Retrying in {:.1}s...",
-                                        reconnect_delay_ms as f64 / 1000.0
-                                    );
-                                    tokio::time::sleep(Duration::from_millis(reconnect_delay_ms))
-                                        .await;
+                                    warn!("Reconnection error: {e}");
                                 }
                             }
                         }
