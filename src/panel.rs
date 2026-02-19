@@ -346,22 +346,40 @@ impl RiscoPanel {
     }
 
     /// Start the watchdog task that sends CLOCK at the configured interval.
+    ///
+    /// The watchdog is resilient to command errors — it logs them and continues
+    /// sending CLOCK. Only an explicit shutdown signal stops the task. This
+    /// matches the JS implementation where the watchdog catches errors and
+    /// reschedules itself regardless.
     fn start_watchdog(&mut self, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) {
         let engine = self.comm.engine().expect("transport not connected").clone();
         let watchdog_ms = self.watchdog_interval_ms;
+        let event_tx = self.event_tx.clone();
         let handle = tokio::spawn(async move {
+            let mut consecutive_failures: u32 = 0;
             loop {
                 tokio::select! {
                     _ = sleep(Duration::from_millis(watchdog_ms)) => {
                         match engine.send_command(&Command::Clock, false).await {
-                            Ok(_) => {}
+                            Ok(_) => {
+                                consecutive_failures = 0;
+                            }
                             Err(RiscoError::CommandTimeout { .. }) => {
-                                warn!("Watchdog CLOCK timed out, will retry");
+                                consecutive_failures += 1;
+                                warn!("Watchdog CLOCK timed out ({} consecutive failures)", consecutive_failures);
                             }
                             Err(e) => {
-                                warn!("Watchdog CLOCK failed: {}", e);
-                                break;
+                                consecutive_failures += 1;
+                                warn!("Watchdog CLOCK failed ({} consecutive failures): {}", consecutive_failures, e);
                             }
+                        }
+                        // If CLOCK has failed many times in a row, the connection is
+                        // likely dead. Trigger a reconnection rather than spinning
+                        // forever on a broken socket.
+                        if consecutive_failures >= 6 {
+                            warn!("Watchdog: {} consecutive CLOCK failures, triggering reconnect", consecutive_failures);
+                            let _ = event_tx.send(PanelEvent::Disconnected);
+                            break;
                         }
                     }
                     _ = shutdown_rx.changed() => {

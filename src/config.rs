@@ -151,6 +151,10 @@ pub struct PanelConfig {
     pub ntp_port: String,
     /// Watchdog CLOCK interval in milliseconds (default: 5000)
     pub watchdog_interval_ms: u64,
+    /// Socket read timeout in milliseconds (default: 30000).
+    /// If no data is received from the panel within this period, the
+    /// connection is considered stale and a reconnection is triggered.
+    pub socket_timeout_ms: u64,
 }
 
 impl Default for PanelConfig {
@@ -170,6 +174,7 @@ impl Default for PanelConfig {
             ntp_server: "pool.ntp.org".to_string(),
             ntp_port: "123".to_string(),
             watchdog_interval_ms: 5000,
+            socket_timeout_ms: 30000,
         }
     }
 }
@@ -255,6 +260,11 @@ impl PanelConfigBuilder {
 
     pub fn watchdog_interval_ms(mut self, ms: u64) -> Self {
         self.config.watchdog_interval_ms = ms;
+        self
+    }
+
+    pub fn socket_timeout_ms(mut self, ms: u64) -> Self {
+        self.config.socket_timeout_ms = ms;
         self
     }
 

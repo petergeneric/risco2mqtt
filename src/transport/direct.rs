@@ -47,11 +47,13 @@ impl DirectTcpTransport {
         let crypt = RiscoCrypt::new(config.panel_id);
         let command_engine = Arc::new(CommandEngine::new(writer, crypt));
 
-        // Spawn reader task
+        // Spawn reader task with socket-level read timeout
+        let socket_timeout = Duration::from_millis(config.socket_timeout_ms.max(1000));
         let reader_handle = spawn_reader_task(
             reader,
             command_engine.clone(),
             event_tx.clone(),
+            socket_timeout,
         );
 
         let transport = Self {
@@ -201,25 +203,31 @@ impl Drop for DirectTcpTransport {
 }
 
 /// Spawn the reader task that processes incoming data from the panel.
+///
+/// A read timeout ensures that stale connections (where the panel silently
+/// stops sending data without closing the TCP socket) are detected and
+/// trigger a reconnection. This matches the JS implementation's 30-second
+/// `socket.setTimeout()` behaviour.
 fn spawn_reader_task(
     mut reader: tokio::net::tcp::OwnedReadHalf,
     engine: Arc<CommandEngine>,
     event_tx: EventSender,
+    socket_timeout: Duration,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 4096];
         let mut leftover = Vec::new();
 
         loop {
-            match reader.read(&mut buf).await {
-                Ok(0) => {
+            match tokio::time::timeout(socket_timeout, reader.read(&mut buf)).await {
+                Ok(Ok(0)) => {
                     // Connection closed
                     debug!("Reader: connection closed");
                     engine.set_connected(false).await;
                     let _ = event_tx.send(PanelEvent::Disconnected);
                     break;
                 }
-                Ok(n) => {
+                Ok(Ok(n)) => {
                     let mut data = leftover.clone();
                     data.extend_from_slice(&buf[..n]);
                     leftover.clear();
@@ -231,8 +239,19 @@ fn spawn_reader_task(
                         process_message(&msg, &engine, &event_tx).await;
                     }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!("Reader: read error: {}", e);
+                    engine.set_connected(false).await;
+                    let _ = event_tx.send(PanelEvent::Disconnected);
+                    break;
+                }
+                Err(_) => {
+                    // Socket read timeout — no data received within the timeout period.
+                    // The connection is likely stale; trigger reconnection.
+                    warn!(
+                        "Reader: no data received for {:.0}s, connection appears stale",
+                        socket_timeout.as_secs_f64()
+                    );
                     engine.set_connected(false).await;
                     let _ = event_tx.send(PanelEvent::Disconnected);
                     break;

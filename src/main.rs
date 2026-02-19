@@ -82,6 +82,8 @@ struct PanelToml {
     disable_risco_cloud: bool,
     #[serde(default = "default_watchdog_interval")]
     watchdog_interval_ms: u64,
+    #[serde(default = "default_socket_timeout")]
+    socket_timeout_ms: u64,
 }
 
 fn default_panel_port() -> u16 {
@@ -104,6 +106,9 @@ fn default_ntp_port() -> String {
 }
 fn default_watchdog_interval() -> u64 {
     5000
+}
+fn default_socket_timeout() -> u64 {
+    30000
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +171,7 @@ fn build_panel_config(toml: &PanelToml) -> Result<PanelConfig> {
         .ntp_port(&toml.ntp_port)
         .disable_risco_cloud(toml.disable_risco_cloud)
         .watchdog_interval_ms(toml.watchdog_interval_ms)
+        .socket_timeout_ms(toml.socket_timeout_ms)
         .build())
 }
 
