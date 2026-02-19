@@ -85,7 +85,6 @@ pub struct RiscoPanel {
     watchdog_handle: Option<tokio::task::JoinHandle<()>>,
     data_listener_handle: Option<tokio::task::JoinHandle<()>>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
-    disconnecting: Arc<RwLock<bool>>,
     watchdog_interval_ms: u64,
 }
 
@@ -195,7 +194,6 @@ impl RiscoPanel {
             watchdog_handle: None,
             data_listener_handle: None,
             shutdown_tx,
-            disconnecting: Arc::new(RwLock::new(false)),
             watchdog_interval_ms,
         };
 
@@ -710,7 +708,6 @@ impl RiscoPanel {
     /// Disconnect from the panel and clean up.
     pub async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from panel");
-        *self.disconnecting.write().await = true;
         // Signal shutdown
         let _ = self.shutdown_tx.send(true);
 
