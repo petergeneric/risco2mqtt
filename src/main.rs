@@ -9,6 +9,7 @@ use chrono::Utc;
 use clap::Parser;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde::{Deserialize, Serialize};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
@@ -857,227 +858,258 @@ async fn main() -> Result<()> {
     let snapshot_interval_secs = config.mqtt.snapshot_interval_secs;
     let zone_names = Arc::new(config.zone_names);
 
-    // Connect to panel
-    let reconnect_delay_ms = panel_config.reconnect_delay_ms;
-    info!("Connecting to Risco panel at {}:{}", config.panel.panel_ip, config.panel.panel_port);
-    let panel = Arc::new(Mutex::new(RiscoPanel::connect(panel_config.clone()).await?));
-    let reconnect_config = {
-        let panel_lock = panel.lock().await;
-        panel_lock.config().clone()
-    };
-    info!("Panel connected and initialized");
+    let (mqtt_host, mqtt_port) = parse_mqtt_url(&config.mqtt.url)?;
 
-    // Set up MQTT
-    let (host, port) = parse_mqtt_url(&config.mqtt.url)?;
-    let mut mqtt_opts = MqttOptions::new(&config.mqtt.client_id, &host, port);
-    mqtt_opts.set_keep_alive(Duration::from_secs(30));
-    let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 256);
+    let mut sighup = signal(SignalKind::hangup())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
 
-    // Subscribe to command topic
-    client
-        .subscribe(&subscribe_topic, QoS::AtLeastOnce)
-        .await
-        .context("Failed to subscribe to MQTT topic")?;
-    info!("MQTT: subscribed to {subscribe_topic}");
+    loop {
+        // Connect to panel
+        let reconnect_delay_ms = panel_config.reconnect_delay_ms;
+        info!(
+            "Connecting to Risco panel at {}:{}",
+            config.panel.panel_ip, config.panel.panel_port
+        );
+        let panel = Arc::new(Mutex::new(
+            RiscoPanel::connect(panel_config.clone()).await?,
+        ));
+        let reconnect_config = {
+            let panel_lock = panel.lock().await;
+            panel_lock.config().clone()
+        };
+        info!("Panel connected and initialized");
 
-    // Publish initial snapshot
-    {
-        let panel_lock = panel.lock().await;
-        publish_snapshot(&client, &publish_topic, &*panel_lock, &zone_names).await;
-    }
+        // Set up MQTT
+        let mut mqtt_opts =
+            MqttOptions::new(&config.mqtt.client_id, &mqtt_host, mqtt_port);
+        mqtt_opts.set_keep_alive(Duration::from_secs(30));
+        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 256);
 
-    // Task 1: Panel event listener
-    let panel_events = Arc::clone(&panel);
-    let client_events = client.clone();
-    let topic_events = publish_topic.clone();
-    let zn_events = Arc::clone(&zone_names);
-    let event_rx = {
-        let panel_lock = panel.lock().await;
-        panel_lock.subscribe()
-    };
-    let event_handle = tokio::spawn(async move {
-        let mut rx = event_rx;
-        let mut current_config = reconnect_config;
-        loop {
-            match rx.recv().await {
-                Ok(PanelEvent::Disconnected) => {
-                    warn!("Panel disconnected, will attempt reconnection");
+        // Subscribe to command topic
+        client
+            .subscribe(&subscribe_topic, QoS::AtLeastOnce)
+            .await
+            .context("Failed to subscribe to MQTT topic")?;
+        info!("MQTT: subscribed to {subscribe_topic}");
 
-                    // Extract device snapshots from the old panel for reconnection
-                    let (zones, partitions, outputs, system) = {
-                        let panel_lock = panel_events.lock().await;
-                        (
-                            panel_lock.zones().await,
-                            panel_lock.partitions().await,
-                            panel_lock.outputs().await,
-                            panel_lock.system().await,
-                        )
-                    };
+        // Publish initial snapshot
+        {
+            let panel_lock = panel.lock().await;
+            publish_snapshot(&client, &publish_topic, &*panel_lock, &zone_names).await;
+        }
 
-                    // Outer reconnection loop — retries indefinitely
-                    loop {
-                        info!("Attempting panel reconnection...");
-                        match RiscoPanel::reconnect(
-                            current_config.clone(),
-                            zones.clone(),
-                            partitions.clone(),
-                            outputs.clone(),
-                            system.clone(),
-                        )
-                        .await
-                        {
-                            Ok(new_panel) => {
-                                // Update config with any memorized values from the new connection
-                                current_config = new_panel.config().clone();
-                                rx = new_panel.subscribe();
-                                {
-                                    let mut panel_lock = panel_events.lock().await;
-                                    *panel_lock = new_panel;
+        // Task 1: Panel event listener
+        let panel_events = Arc::clone(&panel);
+        let client_events = client.clone();
+        let topic_events = publish_topic.clone();
+        let zn_events = Arc::clone(&zone_names);
+        let event_rx = {
+            let panel_lock = panel.lock().await;
+            panel_lock.subscribe()
+        };
+        let event_handle = tokio::spawn(async move {
+            let mut rx = event_rx;
+            let mut current_config = reconnect_config;
+            loop {
+                match rx.recv().await {
+                    Ok(PanelEvent::Disconnected) => {
+                        warn!("Panel disconnected, will attempt reconnection");
+
+                        // Extract device snapshots from the old panel for reconnection
+                        let (zones, partitions, outputs, system) = {
+                            let panel_lock = panel_events.lock().await;
+                            (
+                                panel_lock.zones().await,
+                                panel_lock.partitions().await,
+                                panel_lock.outputs().await,
+                                panel_lock.system().await,
+                            )
+                        };
+
+                        // Outer reconnection loop — retries indefinitely
+                        loop {
+                            info!("Attempting panel reconnection...");
+                            match RiscoPanel::reconnect(
+                                current_config.clone(),
+                                zones.clone(),
+                                partitions.clone(),
+                                outputs.clone(),
+                                system.clone(),
+                            )
+                            .await
+                            {
+                                Ok(new_panel) => {
+                                    // Update config with any memorized values from the new connection
+                                    current_config = new_panel.config().clone();
+                                    rx = new_panel.subscribe();
+                                    {
+                                        let mut panel_lock = panel_events.lock().await;
+                                        *panel_lock = new_panel;
+                                    }
+                                    info!("Panel reconnected successfully");
+                                    // Publish a fresh snapshot after reconnection
+                                    {
+                                        let panel_lock = panel_events.lock().await;
+                                        publish_snapshot(
+                                            &client_events,
+                                            &topic_events,
+                                            &*panel_lock,
+                                            &zn_events,
+                                        )
+                                        .await;
+                                    }
+                                    break; // Back to main event loop
                                 }
-                                info!("Panel reconnected successfully");
-                                // Publish a fresh snapshot after reconnection
-                                {
-                                    let panel_lock = panel_events.lock().await;
-                                    publish_snapshot(
-                                        &client_events,
-                                        &topic_events,
+                                Err(e) => {
+                                    error!(
+                                        "Reconnection failed: {e}. Retrying in {:.1}s...",
+                                        reconnect_delay_ms as f64 / 1000.0
+                                    );
+                                    tokio::time::sleep(Duration::from_millis(reconnect_delay_ms))
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                    Ok(event) => {
+                        let panel_lock = panel_events.lock().await;
+                        handle_panel_event(
+                            event,
+                            &client_events,
+                            &topic_events,
+                            &*panel_lock,
+                            &zn_events,
+                        )
+                        .await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("Event receiver lagged, missed {n} events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        info!("Event channel closed");
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Task 2: MQTT event loop (receives messages, handles commands)
+        let panel_cmds = Arc::clone(&panel);
+        let client_cmds = client.clone();
+        let topic_cmds = publish_topic.clone();
+        let zn_cmds = Arc::clone(&zone_names);
+        let sub_topic = subscribe_topic.clone();
+        let mqtt_handle = tokio::spawn(async move {
+            loop {
+                match eventloop.poll().await {
+                    Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                        // (Re)subscribe after every broker connect/reconnect.
+                        // rumqttc does not auto-resubscribe, so without this a
+                        // broker restart silently drops our subscription and we
+                        // stop receiving commands.
+                        info!("MQTT: connected, subscribing to {sub_topic}");
+                        if let Err(e) =
+                            client_cmds.subscribe(&sub_topic, QoS::AtLeastOnce).await
+                        {
+                            error!("Failed to subscribe to {sub_topic}: {e}");
+                        }
+                    }
+                    Ok(Event::Incoming(Packet::Publish(msg))) => {
+                        if msg.topic == sub_topic {
+                            let payload = String::from_utf8_lossy(&msg.payload);
+                            match serde_json::from_str::<MqttCommand>(&payload) {
+                                Ok(cmd) => {
+                                    if cmd.op == "SNAPSHOT" {
+                                        debug!("MQTT command received: {payload}");
+                                    } else {
+                                        info!("MQTT command received: {payload}");
+                                    }
+                                    let panel_lock = panel_cmds.lock().await;
+                                    handle_command(
+                                        &payload,
+                                        cmd,
+                                        &client_cmds,
+                                        &topic_cmds,
                                         &*panel_lock,
-                                        &zn_events,
+                                        &zn_cmds,
                                     )
                                     .await;
                                 }
-                                break; // Back to main event loop
-                            }
-                            Err(e) => {
-                                error!(
-                                    "Reconnection failed: {e}. Retrying in {:.1}s...",
-                                    reconnect_delay_ms as f64 / 1000.0
-                                );
-                                tokio::time::sleep(Duration::from_millis(reconnect_delay_ms))
-                                    .await;
-                            }
-                        }
-                    }
-                }
-                Ok(event) => {
-                    let panel_lock = panel_events.lock().await;
-                    handle_panel_event(
-                        event,
-                        &client_events,
-                        &topic_events,
-                        &*panel_lock,
-                        &zn_events,
-                    )
-                    .await;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("Event receiver lagged, missed {n} events");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    info!("Event channel closed");
-                    break;
-                }
-            }
-        }
-    });
-
-    // Task 2: MQTT event loop (receives messages, handles commands)
-    let panel_cmds = Arc::clone(&panel);
-    let client_cmds = client.clone();
-    let topic_cmds = publish_topic.clone();
-    let zn_cmds = Arc::clone(&zone_names);
-    let sub_topic = subscribe_topic.clone();
-    let mqtt_handle = tokio::spawn(async move {
-        loop {
-            match eventloop.poll().await {
-                Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                    // (Re)subscribe after every broker connect/reconnect.
-                    // rumqttc does not auto-resubscribe, so without this a
-                    // broker restart silently drops our subscription and we
-                    // stop receiving commands.
-                    info!("MQTT: connected, subscribing to {sub_topic}");
-                    if let Err(e) = client_cmds.subscribe(&sub_topic, QoS::AtLeastOnce).await {
-                        error!("Failed to subscribe to {sub_topic}: {e}");
-                    }
-                }
-                Ok(Event::Incoming(Packet::Publish(msg))) => {
-                    if msg.topic == sub_topic {
-                        let payload = String::from_utf8_lossy(&msg.payload);
-                        match serde_json::from_str::<MqttCommand>(&payload) {
-                            Ok(cmd) => {
-                                if cmd.op == "SNAPSHOT" {
-                                    debug!("MQTT command received: {payload}");
-                                } else {
-                                    info!("MQTT command received: {payload}");
+                                Err(e) => {
+                                    warn!("Failed to parse MQTT command: {e}");
                                 }
-                                let panel_lock = panel_cmds.lock().await;
-                                handle_command(
-                                    &payload,
-                                    cmd,
-                                    &client_cmds,
-                                    &topic_cmds,
-                                    &*panel_lock,
-                                    &zn_cmds,
-                                )
-                                .await;
-                            }
-                            Err(e) => {
-                                warn!("Failed to parse MQTT command: {e}");
                             }
                         }
                     }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    error!("MQTT event loop error: {e}");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("MQTT event loop error: {e}");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
                 }
             }
-        }
-    });
+        });
 
-    // Task 3: Snapshot timer — polls panel for fresh status before publishing
-    let panel_snap = Arc::clone(&panel);
-    let client_snap = client.clone();
-    let topic_snap = publish_topic.clone();
-    let zn_snap = Arc::clone(&zone_names);
-    let snap_handle = tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(snapshot_interval_secs));
-        // Skip the first immediate tick (we already published an initial snapshot)
-        ticker.tick().await;
-        loop {
+        // Task 3: Snapshot timer — polls panel for fresh status before publishing
+        let panel_snap = Arc::clone(&panel);
+        let client_snap = client.clone();
+        let topic_snap = publish_topic.clone();
+        let zn_snap = Arc::clone(&zone_names);
+        let snap_handle = tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_secs(snapshot_interval_secs));
+            // Skip the first immediate tick (we already published an initial snapshot)
             ticker.tick().await;
-            let panel_lock = panel_snap.lock().await;
-            // Poll the panel for current zone/partition status so snapshots
-            // reflect live state rather than a potentially stale cache.
-            if let Err(e) = panel_lock.refresh_status().await {
-                warn!("Status poll failed: {e}");
+            loop {
+                ticker.tick().await;
+                let panel_lock = panel_snap.lock().await;
+                // Poll the panel for current zone/partition status so snapshots
+                // reflect live state rather than a potentially stale cache.
+                if let Err(e) = panel_lock.refresh_status().await {
+                    warn!("Status poll failed: {e}");
+                }
+                publish_snapshot(&client_snap, &topic_snap, &*panel_lock, &zn_snap).await;
             }
-            publish_snapshot(&client_snap, &topic_snap, &*panel_lock, &zn_snap).await;
-        }
-    });
+        });
 
-    // Wait for Ctrl+C
-    info!("MQTT bridge running. Press Ctrl+C to stop.");
-    tokio::signal::ctrl_c().await?;
-    info!("Shutting down...");
+        // Wait for a signal
+        info!("MQTT bridge running. Send SIGHUP to restart, SIGINT/SIGTERM to stop.");
+        let restart = tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received SIGINT, shutting down...");
+                false
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, shutting down...");
+                false
+            }
+            _ = sighup.recv() => {
+                info!("Received SIGHUP, restarting connections...");
+                true
+            }
+        };
 
-    // Abort tasks
-    event_handle.abort();
-    mqtt_handle.abort();
-    snap_handle.abort();
+        // Abort tasks
+        event_handle.abort();
+        mqtt_handle.abort();
+        snap_handle.abort();
 
-    // Disconnect panel
-    match Arc::try_unwrap(panel) {
-        Ok(mutex) => {
-            let mut p = mutex.into_inner();
-            if let Err(e) = p.disconnect().await {
-                warn!("Error disconnecting panel: {e}");
+        // Disconnect panel
+        match Arc::try_unwrap(panel) {
+            Ok(mutex) => {
+                let mut p = mutex.into_inner();
+                if let Err(e) = p.disconnect().await {
+                    warn!("Error disconnecting panel: {e}");
+                }
+            }
+            Err(_arc) => {
+                warn!("Could not unwrap panel Arc for clean disconnect (tasks still hold references)");
             }
         }
-        Err(_arc) => {
-            warn!("Could not unwrap panel Arc for clean disconnect (tasks still hold references)");
+
+        if !restart {
+            break;
         }
+        info!("Reconnecting...");
     }
 
     info!("Shutdown complete");
