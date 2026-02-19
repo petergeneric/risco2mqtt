@@ -853,13 +853,14 @@ async fn main() -> Result<()> {
         std::fs::read_to_string(&cli.config).context("Failed to read config file")?;
     let config: Config = toml::from_str(&config_text).context("Failed to parse config file")?;
 
-    let panel_config = build_panel_config(&config.panel)?;
-    let publish_topic = config.mqtt.publish_topic.clone();
-    let subscribe_topic = config.mqtt.subscribe_topic.clone();
-    let snapshot_interval_secs = config.mqtt.snapshot_interval_secs;
-    let zone_names = Arc::new(config.zone_names);
+    let mut panel_config = build_panel_config(&config.panel)?;
+    let mut mqtt_client_id = config.mqtt.client_id;
+    let mut publish_topic = config.mqtt.publish_topic;
+    let mut subscribe_topic = config.mqtt.subscribe_topic;
+    let mut snapshot_interval_secs = config.mqtt.snapshot_interval_secs;
+    let mut zone_names = Arc::new(config.zone_names);
 
-    let (mqtt_host, mqtt_port) = parse_mqtt_url(&config.mqtt.url)?;
+    let (mut mqtt_host, mut mqtt_port) = parse_mqtt_url(&config.mqtt.url)?;
 
     let mut sighup = signal(SignalKind::hangup())?;
     let mut sigterm = signal(SignalKind::terminate())?;
@@ -869,7 +870,7 @@ async fn main() -> Result<()> {
         let reconnect_delay_ms = panel_config.reconnect_delay_ms;
         info!(
             "Connecting to Risco panel at {}:{}",
-            config.panel.panel_ip, config.panel.panel_port
+            panel_config.panel_ip, panel_config.panel_port
         );
         let panel = Arc::new(Mutex::new(
             RiscoPanel::connect(panel_config.clone()).await?,
@@ -882,7 +883,7 @@ async fn main() -> Result<()> {
 
         // Set up MQTT
         let mut mqtt_opts =
-            MqttOptions::new(&config.mqtt.client_id, &mqtt_host, mqtt_port);
+            MqttOptions::new(&mqtt_client_id, &mqtt_host, mqtt_port);
         mqtt_opts.set_keep_alive(Duration::from_secs(30));
         let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 256);
 
@@ -1091,7 +1092,7 @@ async fn main() -> Result<()> {
                 false
             }
             _ = sighup.recv() => {
-                info!("Received SIGHUP, restarting connections...");
+                info!("Received SIGHUP, reloading config and restarting connections...");
                 true
             }
         };
@@ -1117,6 +1118,34 @@ async fn main() -> Result<()> {
         if !restart {
             break;
         }
+
+        // Reload config from disk; keep previous config on failure
+        info!("Reloading config from {}", cli.config);
+        match std::fs::read_to_string(&cli.config)
+            .context("Failed to read config file")
+            .and_then(|text| {
+                toml::from_str::<Config>(&text).context("Failed to parse config file")
+            }) {
+            Ok(new_config) => match build_panel_config(&new_config.panel) {
+                Ok(new_panel_config) => match parse_mqtt_url(&new_config.mqtt.url) {
+                    Ok((new_host, new_port)) => {
+                        panel_config = new_panel_config;
+                        mqtt_host = new_host;
+                        mqtt_port = new_port;
+                        mqtt_client_id = new_config.mqtt.client_id;
+                        publish_topic = new_config.mqtt.publish_topic;
+                        subscribe_topic = new_config.mqtt.subscribe_topic;
+                        snapshot_interval_secs = new_config.mqtt.snapshot_interval_secs;
+                        zone_names = Arc::new(new_config.zone_names);
+                        info!("Config reloaded successfully");
+                    }
+                    Err(e) => warn!("Invalid MQTT URL in new config, keeping previous: {e}"),
+                },
+                Err(e) => warn!("Invalid panel config in new config, keeping previous: {e}"),
+            },
+            Err(e) => warn!("Failed to reload config, keeping previous: {e}"),
+        }
+
         info!("Reconnecting...");
     }
 
