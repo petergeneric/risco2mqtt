@@ -291,10 +291,10 @@ impl CommandEngine {
 
         // Check if we should reset the counter (60s window)
         let mut last_error = self.last_crc_error.lock().await;
-        if let Some(last) = *last_error {
-            if last.elapsed() > CRC_RESET_WINDOW {
-                *count = 0;
-            }
+        if let Some(last) = *last_error
+            && last.elapsed() > CRC_RESET_WINDOW
+        {
+            *count = 0;
         }
 
         *count += 1;

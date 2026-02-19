@@ -581,13 +581,13 @@ impl RiscoPanel {
     pub async fn handle_output_status(&self, data: &str) {
         if let Some((id, status)) = parse_status_update(data, "OSTT") {
             let mut outputs = self.outputs.write().await;
-            if let Some(output) = outputs.get_mut((id as usize).wrapping_sub(1)) {
-                if let Some(event) = output.update_status(&status) {
-                    let _ = self.event_tx.send(PanelEvent::OutputStatusChanged {
-                        output_id: id,
-                        event,
-                    });
-                }
+            if let Some(output) = outputs.get_mut((id as usize).wrapping_sub(1))
+                && let Some(event) = output.update_status(&status)
+            {
+                let _ = self.event_tx.send(PanelEvent::OutputStatusChanged {
+                    output_id: id,
+                    event,
+                });
             }
         }
     }

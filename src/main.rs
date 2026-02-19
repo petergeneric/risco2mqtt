@@ -267,6 +267,7 @@ struct MqttSimpleEvent {
 struct MqttCommand {
     op: String,
     #[serde(default)]
+    #[allow(dead_code)]
     op_id: Option<String>,
     #[serde(default)]
     zone: Option<u32>,
@@ -767,12 +768,12 @@ async fn handle_command(
                 }
             };
             info!("Command: ZONE_BYPASS_ENABLE zone {id}");
-            if let Some(z) = panel.zone(id).await {
-                if z.is_bypassed() {
-                    info!("Zone {id} already bypassed");
-                    publish_cmd_ack(client, topic, true, src_json, None).await;
-                    return;
-                }
+            if let Some(z) = panel.zone(id).await
+                && z.is_bypassed()
+            {
+                info!("Zone {id} already bypassed");
+                publish_cmd_ack(client, topic, true, src_json, None).await;
+                return;
             }
             let success = match panel.toggle_bypass_zone(id).await {
                 Ok(true) => {
@@ -801,12 +802,12 @@ async fn handle_command(
                 }
             };
             info!("Command: ZONE_BYPASS_DISABLE zone {id}");
-            if let Some(z) = panel.zone(id).await {
-                if !z.is_bypassed() {
-                    info!("Zone {id} already not bypassed");
-                    publish_cmd_ack(client, topic, true, src_json, None).await;
-                    return;
-                }
+            if let Some(z) = panel.zone(id).await
+                && !z.is_bypassed()
+            {
+                info!("Zone {id} already not bypassed");
+                publish_cmd_ack(client, topic, true, src_json, None).await;
+                return;
             }
             let success = match panel.toggle_bypass_zone(id).await {
                 Ok(true) => {
@@ -895,7 +896,7 @@ async fn main() -> Result<()> {
         // Publish initial snapshot
         {
             let panel_lock = panel.lock().await;
-            publish_snapshot(&client, &publish_topic, &*panel_lock, &zone_names).await;
+            publish_snapshot(&client, &publish_topic, &panel_lock, &zone_names).await;
         }
 
         // Task 1: Panel event listener
@@ -953,7 +954,7 @@ async fn main() -> Result<()> {
                                         publish_snapshot(
                                             &client_events,
                                             &topic_events,
-                                            &*panel_lock,
+                                            &panel_lock,
                                             &zn_events,
                                         )
                                         .await;
@@ -977,7 +978,7 @@ async fn main() -> Result<()> {
                             event,
                             &client_events,
                             &topic_events,
-                            &*panel_lock,
+                            &panel_lock,
                             &zn_events,
                         )
                         .await;
@@ -1030,7 +1031,7 @@ async fn main() -> Result<()> {
                                         cmd,
                                         &client_cmds,
                                         &topic_cmds,
-                                        &*panel_lock,
+                                        &panel_lock,
                                         &zn_cmds,
                                     )
                                     .await;
@@ -1067,7 +1068,7 @@ async fn main() -> Result<()> {
                 if let Err(e) = panel_lock.refresh_status().await {
                     warn!("Status poll failed: {e}");
                 }
-                publish_snapshot(&client_snap, &topic_snap, &*panel_lock, &zn_snap).await;
+                publish_snapshot(&client_snap, &topic_snap, &panel_lock, &zn_snap).await;
             }
         });
 

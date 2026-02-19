@@ -196,11 +196,11 @@ impl RiscoComm {
 
             // Get local timezone offset
             let local_tz = local_gmt_offset();
-            if let Some(idx) = timezone_index_for_offset(&local_tz) {
-                if panel_tz_idx != idx as usize {
-                    commands.push(Command::SetTimezone { index: idx });
-                    debug!("Prepare panel for updating timezone");
-                }
+            if let Some(idx) = timezone_index_for_offset(&local_tz)
+                && panel_tz_idx != idx as usize
+            {
+                commands.push(Command::SetTimezone { index: idx });
+                debug!("Prepare panel for updating timezone");
             }
 
             // Check NTP server
@@ -372,16 +372,16 @@ impl RiscoComm {
                 let idx = (min as usize - 1) + j;
                 if idx < zones.len() {
                     let zone = &mut zones[idx];
-                    if let Some(label) = zlabels.get(j) {
-                        if !label.is_empty() {
-                            zone.label = label.clone();
-                        }
+                    if let Some(label) = zlabels.get(j)
+                        && !label.is_empty()
+                    {
+                        zone.label = label.clone();
                     }
-                    if let Some(t) = ztypes.get(j) {
-                        if let Ok(type_num) = t.parse::<u8>() {
-                            zone.zone_type = crate::constants::ZoneType::from_u8(type_num)
-                                .unwrap_or(crate::constants::ZoneType::NotUsed);
-                        }
+                    if let Some(t) = ztypes.get(j)
+                        && let Ok(type_num) = t.parse::<u8>()
+                    {
+                        zone.zone_type = crate::constants::ZoneType::from_u8(type_num)
+                            .unwrap_or(crate::constants::ZoneType::NotUsed);
                     }
                     if let Some(t) = ztechnos.get(j) {
                         zone.technology = ZoneTechnology::from_code(t);
@@ -475,7 +475,7 @@ impl RiscoComm {
                         output.output_type = OutputType::from_value(type_num);
 
                         // Query pulse delay for pulsed outputs
-                        if type_num % 2 == 0 {
+                        if type_num.is_multiple_of(2) {
                             let pulse_resp = self
                                 .send_command(&Command::OutputPulse { id: min + j as u32 }, false)
                                 .await;
