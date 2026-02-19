@@ -177,14 +177,14 @@ impl RiscoCrypt {
         let cmd_bytes = full_cmd.as_bytes();
 
         // Encrypt command bytes
-        let encrypted_cmd = self.encrypt_chars(cmd_bytes, 0, use_crypt);
+        let encrypted_cmd = self.encrypt_chars(cmd_bytes, use_crypt);
         encrypted.extend_from_slice(&encrypted_cmd);
 
         // Calculate CRC on unencrypted command bytes
         let crc_value = Self::compute_crc(cmd_bytes);
 
         // Encrypt CRC bytes
-        let encrypted_crc = self.encrypt_chars(crc_value.as_bytes(), 0, use_crypt);
+        let encrypted_crc = self.encrypt_chars(crc_value.as_bytes(), use_crypt);
         encrypted.extend_from_slice(&encrypted_crc);
 
         // End of frame
@@ -197,10 +197,8 @@ impl RiscoCrypt {
     ///
     /// Each byte is XORed with the pseudo buffer (if encryption is active),
     /// then DLE-escaped if the result is STX, ETX, or DLE.
-    fn encrypt_chars(&mut self, data: &[u8], offset: usize, use_crypt: bool) -> Vec<u8> {
+    fn encrypt_chars(&mut self, data: &[u8], use_crypt: bool) -> Vec<u8> {
         let mut result = Vec::with_capacity(data.len() * 2);
-        let ofs = offset;
-        let _ = ofs; // offset not used in encryption direction per JS source
 
         for &byte in data {
             let mut b = byte;
