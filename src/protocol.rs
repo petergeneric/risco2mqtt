@@ -165,13 +165,6 @@ pub fn parse_value_after_eq(response: &str) -> &str {
     }
 }
 
-/// Parse a tab-separated response after '=' into a Vec of strings.
-/// e.g., "ZTYPE*1:8=0\t1\t2\t0\t5\t0\t0\t0" → ["0", "1", "2", "0", "5", "0", "0", "0"]
-pub fn parse_tab_separated(response: &str) -> Vec<String> {
-    let value = parse_value_after_eq(response);
-    value.split('\t').map(|s| s.to_string()).collect()
-}
-
 /// Parse a tab-separated response, trimming spaces from each entry.
 pub fn parse_tab_separated_trimmed(response: &str) -> Vec<String> {
     let value = parse_value_after_eq(response);
@@ -258,12 +251,6 @@ mod tests {
         assert_eq!(parse_value_after_eq("PNLCNF=RP432"), "RP432");
         assert_eq!(parse_value_after_eq("ELASEN=1"), "1");
         assert_eq!(parse_value_after_eq("noequals"), "noequals");
-    }
-
-    #[test]
-    fn test_parse_tab_separated() {
-        let result = parse_tab_separated("ZTYPE*1:3=0\t1\t5");
-        assert_eq!(result, vec!["0", "1", "5"]);
     }
 
     #[test]
