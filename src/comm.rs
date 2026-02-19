@@ -294,58 +294,33 @@ impl RiscoComm {
             let min = batch_start + 1;
             let max = (batch_start + 8).min(self.max_zones);
 
-            let ztypes = match self.send_command(&Command::ZoneTypes { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(ztypes) = self.send_batch_query(&Command::ZoneTypes { min, max }, "Zone", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let ztypes = parse_tab_separated_trimmed(&ztypes);
 
-            let zparts = match self.send_command(&Command::ZonePartitions { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(zparts) = self.send_batch_query(&Command::ZonePartitions { min, max }, "Zone", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let zparts = parse_tab_separated_trimmed(&zparts);
 
-            let zareas = match self.send_command(&Command::ZoneAreas { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(zareas) = self.send_batch_query(&Command::ZoneAreas { min, max }, "Zone", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let zareas = parse_tab_separated_trimmed(&zareas);
 
-            let zlabels = match self.send_command(&Command::ZoneLabels { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(zlabels) = self.send_batch_query(&Command::ZoneLabels { min, max }, "Zone", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let zlabels = parse_tab_separated_labels(&zlabels);
 
-            let zstatus = match self.send_command(&Command::ZoneStatus { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Zone slot {} doesn't exist, stopping zone discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(zstatus) = self.send_batch_query(&Command::ZoneStatus { min, max }, "Zone", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let zstatus = parse_tab_separated_trimmed(&zstatus);
 
@@ -420,47 +395,27 @@ impl RiscoComm {
             let min = batch_start + 1;
             let max = (batch_start + 8).min(self.max_outputs);
 
-            let otypes = match self.send_command(&Command::OutputTypes { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(otypes) = self.send_batch_query(&Command::OutputTypes { min, max }, "Output", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let otypes = parse_tab_separated_trimmed(&otypes);
 
-            let olabels = match self.send_command(&Command::OutputLabels { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(olabels) = self.send_batch_query(&Command::OutputLabels { min, max }, "Output", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let olabels = parse_tab_separated_labels(&olabels);
 
-            let ostatus = match self.send_command(&Command::OutputStatus { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(ostatus) = self.send_batch_query(&Command::OutputStatus { min, max }, "Output", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let ostatus = parse_tab_separated_trimmed(&ostatus);
 
-            let ogroups = match self.send_command(&Command::OutputGroups { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Output slot {} doesn't exist, stopping output discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(ogroups) = self.send_batch_query(&Command::OutputGroups { min, max }, "Output", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let ogroups = parse_tab_separated_trimmed(&ogroups);
 
@@ -519,25 +474,15 @@ impl RiscoComm {
             let min = batch_start + 1;
             let max = (batch_start + 8).min(self.max_parts);
 
-            let plabels = match self.send_command(&Command::PartitionLabels { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Partition slot {} doesn't exist, stopping partition discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(plabels) = self.send_batch_query(&Command::PartitionLabels { min, max }, "Partition", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let plabels = parse_tab_separated_labels(&plabels);
 
-            let pstatus = match self.send_command(&Command::PartitionStatus { min, max }, false).await {
-                Ok(resp) if is_n19(&resp) => {
-                    debug!("Partition slot {} doesn't exist, stopping partition discovery", min);
-                    actual_count = (min - 1) as usize;
-                    break 'batch;
-                }
-                Ok(resp) => resp,
-                Err(e) => return Err(e),
+            let Some(pstatus) = self.send_batch_query(&Command::PartitionStatus { min, max }, "Partition", min).await? else {
+                actual_count = (min - 1) as usize;
+                break 'batch;
             };
             let pstatus = parse_tab_separated_trimmed(&pstatus);
 
@@ -602,6 +547,26 @@ impl RiscoComm {
     /// - Panel ID was discovered via brute-force discovery
     pub fn config(&self) -> &PanelConfig {
         &self.config
+    }
+}
+
+impl RiscoComm {
+    /// Send a batch query command, returning `None` if the panel reports N19
+    /// ("Device Doesn't Exist") for the requested slot range.
+    async fn send_batch_query(
+        &self,
+        command: &Command,
+        device_kind: &str,
+        min: u32,
+    ) -> Result<Option<String>> {
+        match self.send_command(command, false).await {
+            Ok(resp) if is_n19(&resp) => {
+                debug!("{} slot {} doesn't exist, stopping {} discovery", device_kind, min, device_kind.to_lowercase());
+                Ok(None)
+            }
+            Ok(resp) => Ok(Some(resp)),
+            Err(e) => Err(e),
+        }
     }
 }
 
