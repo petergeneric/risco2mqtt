@@ -273,10 +273,6 @@ impl RiscoCrypt {
 
         // Check if message is encrypted
         let use_crypt = data.len() > 1 && data[1] == CRYPT;
-        let prev_crypt = self.crypt_enabled;
-        // Temporarily set crypt state for decryption
-        let _ = prev_crypt;
-
         let decrypted_bytes = self.decrypt_chars(data, use_crypt);
 
         // Work with raw bytes to avoid panics on invalid UTF-8 (e.g. wrong decryption key).
