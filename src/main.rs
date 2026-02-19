@@ -656,7 +656,7 @@ async fn handle_command(
             debug!("Command: SNAPSHOT");
             let snapshot = build_snapshot(panel, zone_names).await;
             let snapshot_value = serde_json::to_value(&snapshot).ok();
-            publish_snapshot(client, topic, panel, zone_names).await;
+            publish_json(client, topic, &snapshot, true).await;
             publish_cmd_ack(client, topic, true, src_json, snapshot_value).await;
         }
 
