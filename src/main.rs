@@ -640,6 +640,28 @@ async fn handle_panel_event(
 // MQTT command handler
 // ---------------------------------------------------------------------------
 
+/// Execute a panel command future and log the result. Returns `true` on success.
+async fn exec_panel_cmd<E: std::fmt::Display>(
+    op: &str,
+    label: &str,
+    fut: impl std::future::Future<Output = std::result::Result<bool, E>>,
+) -> bool {
+    match fut.await {
+        Ok(true) => {
+            info!("{op} {label}: success");
+            true
+        }
+        Ok(false) => {
+            warn!("{op} {label}: panel returned NACK");
+            false
+        }
+        Err(e) => {
+            error!("{op} {label} failed: {e}");
+            false
+        }
+    }
+}
+
 async fn handle_command(
     payload_str: &str,
     cmd: MqttCommand,
@@ -668,60 +690,28 @@ async fn handle_command(
         "ARM_AWAY" => {
             let id = cmd.partition.unwrap_or(1);
             info!("Command: ARM_AWAY partition {id}");
-            let success = match panel.arm_partition(id, ArmType::Away).await {
-                Ok(true) => {
-                    info!("ARM_AWAY partition {id}: success");
-                    true
-                }
-                Ok(false) => {
-                    warn!("ARM_AWAY partition {id}: panel returned NACK");
-                    false
-                }
-                Err(e) => {
-                    error!("ARM_AWAY partition {id} failed: {e}");
-                    false
-                }
-            };
+            let label = format!("partition {id}");
+            let success =
+                exec_panel_cmd("ARM_AWAY", &label, panel.arm_partition(id, ArmType::Away)).await;
             publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
         "ARM_HOME_STAY" => {
             let id = cmd.partition.unwrap_or(1);
             info!("Command: ARM_HOME_STAY partition {id}");
-            let success = match panel.arm_partition(id, ArmType::Stay).await {
-                Ok(true) => {
-                    info!("ARM_HOME_STAY partition {id}: success");
-                    true
-                }
-                Ok(false) => {
-                    warn!("ARM_HOME_STAY partition {id}: panel returned NACK");
-                    false
-                }
-                Err(e) => {
-                    error!("ARM_HOME_STAY partition {id} failed: {e}");
-                    false
-                }
-            };
+            let label = format!("partition {id}");
+            let success =
+                exec_panel_cmd("ARM_HOME_STAY", &label, panel.arm_partition(id, ArmType::Stay))
+                    .await;
             publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
         "DISARM" => {
             let id = cmd.partition.unwrap_or(1);
             info!("Command: DISARM partition {id}");
-            let success = match panel.disarm_partition(id).await {
-                Ok(true) => {
-                    info!("DISARM partition {id}: success");
-                    true
-                }
-                Ok(false) => {
-                    warn!("DISARM partition {id}: panel returned NACK");
-                    false
-                }
-                Err(e) => {
-                    error!("DISARM partition {id} failed: {e}");
-                    false
-                }
-            };
+            let label = format!("partition {id}");
+            let success =
+                exec_panel_cmd("DISARM", &label, panel.disarm_partition(id)).await;
             publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
@@ -741,88 +731,33 @@ async fn handle_command(
                 }
             };
             info!("Command: ARM_GROUP partition {id} group {group}");
-            let success = match panel.group_arm_partition(id, group).await {
-                Ok(true) => {
-                    info!("ARM_GROUP partition {id} group {group}: success");
-                    true
-                }
-                Ok(false) => {
-                    warn!("ARM_GROUP partition {id} group {group}: panel returned NACK");
-                    false
-                }
-                Err(e) => {
-                    error!("ARM_GROUP partition {id} group {group} failed: {e}");
-                    false
-                }
-            };
+            let label = format!("partition {id} group {group}");
+            let success =
+                exec_panel_cmd("ARM_GROUP", &label, panel.group_arm_partition(id, group)).await;
             publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
-        "ZONE_BYPASS_ENABLE" => {
+        "ZONE_BYPASS_ENABLE" | "ZONE_BYPASS_DISABLE" => {
+            let op = cmd.op.as_str();
+            let want_bypassed = op == "ZONE_BYPASS_ENABLE";
             let id = match cmd.zone {
                 Some(id) => id,
                 None => {
-                    warn!("ZONE_BYPASS_ENABLE: missing zone");
+                    warn!("{op}: missing zone");
                     publish_cmd_ack(client, topic, false, src_json, None).await;
                     return;
                 }
             };
-            info!("Command: ZONE_BYPASS_ENABLE zone {id}");
+            info!("Command: {op} zone {id}");
             if let Some(z) = panel.zone(id).await
-                && z.is_bypassed()
+                && z.is_bypassed() == want_bypassed
             {
-                info!("Zone {id} already bypassed");
+                info!("Zone {id} already {}", if want_bypassed { "bypassed" } else { "not bypassed" });
                 publish_cmd_ack(client, topic, true, src_json, None).await;
                 return;
             }
-            let success = match panel.toggle_bypass_zone(id).await {
-                Ok(true) => {
-                    info!("ZONE_BYPASS_ENABLE zone {id}: success");
-                    true
-                }
-                Ok(false) => {
-                    warn!("ZONE_BYPASS_ENABLE zone {id}: panel returned NACK");
-                    false
-                }
-                Err(e) => {
-                    error!("ZONE_BYPASS_ENABLE zone {id} failed: {e}");
-                    false
-                }
-            };
-            publish_cmd_ack(client, topic, success, src_json, None).await;
-        }
-
-        "ZONE_BYPASS_DISABLE" => {
-            let id = match cmd.zone {
-                Some(id) => id,
-                None => {
-                    warn!("ZONE_BYPASS_DISABLE: missing zone");
-                    publish_cmd_ack(client, topic, false, src_json, None).await;
-                    return;
-                }
-            };
-            info!("Command: ZONE_BYPASS_DISABLE zone {id}");
-            if let Some(z) = panel.zone(id).await
-                && !z.is_bypassed()
-            {
-                info!("Zone {id} already not bypassed");
-                publish_cmd_ack(client, topic, true, src_json, None).await;
-                return;
-            }
-            let success = match panel.toggle_bypass_zone(id).await {
-                Ok(true) => {
-                    info!("ZONE_BYPASS_DISABLE zone {id}: success");
-                    true
-                }
-                Ok(false) => {
-                    warn!("ZONE_BYPASS_DISABLE zone {id}: panel returned NACK");
-                    false
-                }
-                Err(e) => {
-                    error!("ZONE_BYPASS_DISABLE zone {id} failed: {e}");
-                    false
-                }
-            };
+            let label = format!("zone {id}");
+            let success = exec_panel_cmd(op, &label, panel.toggle_bypass_zone(id)).await;
             publish_cmd_ack(client, topic, success, src_json, None).await;
         }
 
