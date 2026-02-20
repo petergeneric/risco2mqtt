@@ -283,9 +283,29 @@ impl RiscoCrypt {
         let (cmd_id, command, crc_value, decrypted_str) = {
             let sep = SEP;
 
-            if decrypted_bytes.first() == Some(&b'N') || decrypted_bytes.first() == Some(&b'B') {
-                // Error response: no command ID prefix
-                let sep_pos = decrypted_bytes.iter().position(|&b| b == sep).unwrap_or(decrypted_bytes.len());
+            if decrypted_bytes.len() >= 2
+                && decrypted_bytes[0].is_ascii_digit()
+                && decrypted_bytes[1].is_ascii_digit()
+            {
+                // Normal response: first 2 bytes are command ID (ASCII digits 00-49)
+                let id = String::from_utf8_lossy(&decrypted_bytes[..2]).to_string();
+                let rest = &decrypted_bytes[2..];
+                let sep_pos = rest.iter().position(|&b| b == sep).unwrap_or(rest.len());
+                let cmd = String::from_utf8_lossy(&rest[..sep_pos]).to_string();
+                let crc = if sep_pos < rest.len() {
+                    String::from_utf8_lossy(&rest[sep_pos + 1..]).to_string()
+                } else {
+                    String::new()
+                };
+                let full = String::from_utf8_lossy(&decrypted_bytes).to_string();
+                (id, cmd, crc, full)
+            } else {
+                // No numeric command ID prefix (error responses like N01/BCK2,
+                // bare commands like ACK, LCL, RMT, BOOTRES, etc.)
+                let sep_pos = decrypted_bytes
+                    .iter()
+                    .position(|&b| b == sep)
+                    .unwrap_or(decrypted_bytes.len());
                 let cmd = String::from_utf8_lossy(&decrypted_bytes[..sep_pos]).to_string();
                 let crc = if sep_pos < decrypted_bytes.len() {
                     String::from_utf8_lossy(&decrypted_bytes[sep_pos + 1..]).to_string()
@@ -294,24 +314,6 @@ impl RiscoCrypt {
                 };
                 let full = String::from_utf8_lossy(&decrypted_bytes).to_string();
                 (String::new(), cmd, crc, full)
-            } else {
-                // Normal response: first 2 bytes are command ID (ASCII digits)
-                if decrypted_bytes.len() >= 2 {
-                    let id = String::from_utf8_lossy(&decrypted_bytes[..2]).to_string();
-                    let rest = &decrypted_bytes[2..];
-                    let sep_pos = rest.iter().position(|&b| b == sep).unwrap_or(rest.len());
-                    let cmd = String::from_utf8_lossy(&rest[..sep_pos]).to_string();
-                    let crc = if sep_pos < rest.len() {
-                        String::from_utf8_lossy(&rest[sep_pos + 1..]).to_string()
-                    } else {
-                        String::new()
-                    };
-                    let full = String::from_utf8_lossy(&decrypted_bytes).to_string();
-                    (id, cmd, crc, full)
-                } else {
-                    let full = String::from_utf8_lossy(&decrypted_bytes).to_string();
-                    (String::new(), full.clone(), String::new(), full)
-                }
             }
         };
 
@@ -507,6 +509,71 @@ mod tests {
         crypt.set_crypt_enabled(true);
         let encoded = crypt.encode_command("TEST", "01", Some(false));
         assert_ne!(encoded[1], CRYPT);
+    }
+
+    /// Build an unencrypted frame for a payload with no cmd_id prefix.
+    /// Format: STX + payload + SEP + CRC + ETX
+    fn build_bare_frame(payload: &str) -> Vec<u8> {
+        let data_with_sep = format!("{}{}", payload, char::from(SEP));
+        let crc = RiscoCrypt::compute_crc(data_with_sep.as_bytes());
+        let mut frame = vec![STX];
+        frame.extend_from_slice(data_with_sep.as_bytes());
+        frame.extend_from_slice(crc.as_bytes());
+        frame.push(ETX);
+        frame
+    }
+
+    #[test]
+    fn test_decode_bare_ack_no_cmd_id() {
+        // A bare "ACK" from the panel (no numeric prefix) must not be
+        // misparsed as cmd_id="AC" / command="K".
+        let mut crypt = RiscoCrypt::new(0);
+        crypt.set_crypt_enabled(false);
+
+        let frame = build_bare_frame("ACK");
+        let decoded = crypt.decode_message(&frame);
+        assert_eq!(decoded.cmd_id, "");
+        assert_eq!(decoded.command, "ACK");
+        assert!(decoded.crc_valid);
+    }
+
+    #[test]
+    fn test_decode_bare_bootres() {
+        let mut crypt = RiscoCrypt::new(0);
+        crypt.set_crypt_enabled(false);
+
+        let frame = build_bare_frame("BOOTRES");
+        let decoded = crypt.decode_message(&frame);
+        assert_eq!(decoded.cmd_id, "");
+        assert_eq!(decoded.command, "BOOTRES");
+        assert!(decoded.crc_valid);
+    }
+
+    #[test]
+    fn test_decode_bare_lcl() {
+        let mut crypt = RiscoCrypt::new(0);
+        crypt.set_crypt_enabled(false);
+
+        let frame = build_bare_frame("LCL");
+        let decoded = crypt.decode_message(&frame);
+        assert_eq!(decoded.cmd_id, "");
+        assert_eq!(decoded.command, "LCL");
+        assert!(decoded.crc_valid);
+    }
+
+    #[test]
+    fn test_decode_error_responses_still_work() {
+        // N01 and BCK2 must still parse correctly after the refactor.
+        let mut crypt = RiscoCrypt::new(0);
+        crypt.set_crypt_enabled(false);
+
+        for payload in ["N01", "N11", "N25", "BCK2"] {
+            let frame = build_bare_frame(payload);
+            let decoded = crypt.decode_message(&frame);
+            assert_eq!(decoded.cmd_id, "", "cmd_id should be empty for {}", payload);
+            assert_eq!(decoded.command, payload, "command mismatch for {}", payload);
+            assert!(decoded.crc_valid, "CRC should be valid for {}", payload);
+        }
     }
 
     #[test]
