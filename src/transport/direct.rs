@@ -373,14 +373,28 @@ async fn process_message(
 }
 
 /// Emit panel data through the event system so the panel can update cached state.
+///
+/// The panel sends unsolicited status updates for device state changes
+/// (ZSTT, PSTT, OSTT, SSTT) and system events (BOOTRES). Status updates
+/// are routed to `RiscoPanel::route_panel_data` to keep the cached device
+/// state in sync. BOOTRES indicates the panel has rebooted and all prior
+/// session state is invalid.
+///
+/// Note: the panel may also send `EVENT=` messages (1-256 char event log
+/// entries) which are not currently handled. These carry event log data,
+/// not real-time status.
 fn emit_panel_data(event_tx: &EventSender, command: &str) {
-    // Only emit status update messages that affect cached device state.
     if command.starts_with("ZSTT")
         || command.starts_with("PSTT")
         || command.starts_with("OSTT")
         || command.starts_with("SSTT")
     {
         let _ = event_tx.send(PanelEvent::PanelData(command.to_string()));
+    } else if command.starts_with("BOOTRES") {
+        // Panel has rebooted — all session state (encryption, device cache)
+        // is now invalid. Trigger a full reconnection cycle.
+        warn!("Panel sent BOOTRES (reboot notification), triggering reconnect");
+        let _ = event_tx.send(PanelEvent::Disconnected);
     }
 }
 
