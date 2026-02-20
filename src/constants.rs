@@ -8,6 +8,42 @@ pub const DLE: u8 = 0x10; // Data Link Escape (byte stuffing)
 pub const CRYPT: u8 = 0x11; // Encryption indicator
 pub const SEP: u8 = 0x17; // Separator between command and CRC
 
+/// Maximum packet size in bytes accepted by the panel (`DeviceMaxBufferSize`).
+///
+/// Commands whose framed wire representation exceeds this limit may be
+/// silently truncated or rejected by the panel.
+pub const MAX_PACKET_SIZE: usize = 230;
+
+/// Maximum number of concurrent in-flight commands over TCP/IP.
+///
+/// Our implementation sends one command at a time (using sequence IDs 1-49
+/// with a response-per-request model), so this limit is informational.
+/// The panel supports up to 5 concurrent commands over TCP/IP, 10 over GPRS,
+/// and 1 over direct serial.
+pub const MAX_CONCURRENT_COMMANDS_TCP: u8 = 5;
+
+/// Commands that are sent/received in plaintext (not XOR-encrypted).
+///
+/// These nine commands bypass the LFSR XOR cipher on the wire:
+///
+/// | Command  | Direction | Purpose                                  |
+/// |----------|-----------|------------------------------------------|
+/// | `LCL`    | Send      | Local connect (initiates session)         |
+/// | `RMT`    | Send      | Remote connect (password authentication)  |
+/// | `PNLVER` | Receive   | Panel firmware version (post-auth)        |
+/// | `CALL`   | Send      | Phone call trigger                        |
+/// | `LCDBKL` | Send      | LCD backlight control                     |
+/// | `LCDALL` | Send      | LCD full control                          |
+/// | `BUZZTST`| Send      | Buzzer test                               |
+/// | `TMPSTT` | Receive   | Temperature status                        |
+/// | `KPPROX` | Send      | Keypad proximity event                    |
+///
+/// `PNLVER` being unencrypted is significant — the firmware version is
+/// available before encryption is negotiated.
+pub const UNENCRYPTED_COMMANDS: &[&str] = &[
+    "LCL", "RMT", "PNLVER", "CALL", "LCDBKL", "LCDALL", "BUZZTST", "TMPSTT", "KPPROX",
+];
+
 /// CRC-16/ARC lookup table (256 entries).
 /// Decoded from the base64-encoded JSON array in the original JS source.
 pub const CRC_TABLE: [u16; 256] = [
