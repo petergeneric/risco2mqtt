@@ -4,59 +4,62 @@
 use std::fmt;
 
 /// Error codes returned by the Risco panel in response to commands.
+///
+/// Codes N19, N20, N24, N25 were added in v5/v6 firmware (LightSYS-specific);
+/// older Agility v1 firmware does not return these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PanelErrorCode {
-    /// BCK2 - Callback Error
+    /// BCK2 (`ERROR_CALLBACK`) — Callback error
     Bck2,
-    /// N01 - Error
+    /// N01 (`ERROR01`) — General error
     N01,
-    /// N02 - Unknown Error
+    /// N02 — Unknown error
     N02,
-    /// N03 - Unknown Error
+    /// N03 — Unknown error
     N03,
-    /// N04 - CRC Error
+    /// N04 (`ERROR_CRC`) — CRC mismatch
     N04,
-    /// N05 - Invalid parameter
+    /// N05 (`ERROR_PARAM_NOT_VALID`) — Invalid parameter
     N05,
-    /// N06 - Invalid Value
+    /// N06 (`ERROR_VALUE_NOT_VALID`) — Invalid value
     N06,
-    /// N07 - System Armed
+    /// N07 (`ERROR_SYSTEM_ARMED`) — System is armed; command rejected
     N07,
-    /// N08 - System Alarm
+    /// N08 (`ERROR_SYSTEM_ALARM`) — System is in alarm state
     N08,
-    /// N09 - Default Jumper
+    /// N09 (`ERROR_DEFAULT_JUMPER`) — Default jumper is present
     N09,
-    /// N10 - System Not In Prog Mode
+    /// N10 (`ERROR_SYSTEM_NOT_PROG_MODE`) — Not in programming mode
     N10,
-    /// N11 - System In Prog Mode
+    /// N11 (`ERROR_SYSTEM_IN_PROG_MODE`) — Already in programming mode
     N11,
-    /// N12 - System Not Ready to Arm
+    /// N12 (`ERROR_SYSTEM_NOT_READY_TO_ARM`) — System not ready to arm
     N12,
-    /// N13 - General Error
+    /// N13 (`ERROR_GENERAL_ERROR`) — General system error
     N13,
-    /// N14 - Device Does Not Support This Operation
+    /// N14 (`INCORRECT_UO_TYPE`) — Incorrect utility output type for this operation
     N14,
-    /// N15 - MS Locked
+    /// N15 (`ERROR_MSLOCK`) — Master siren locked
     N15,
-    /// N16 - System Busy
+    /// N16 (`ERROR_BUSY`) — Device busy
     N16,
-    /// N17 - Pin Code In Use
+    /// N17 (`PIN_CODE_INUSE`) — PIN code already in use
     N17,
-    /// N18 - System In RF Allocation Mode
+    /// N18 (`SYSTEM_IN_RF_ALLOCATION_MODE`) — RF allocation mode active
     N18,
-    /// N19 - Device Doesn't Exist
+    /// N19 (`DEVICE_DOES_NOT_EXISTS`) — Device not found (v5+ firmware)
     N19,
-    /// N20 - TEOL Termination Not Supported
+    /// N20 (`TEOL_TERMINATION_NOT_SUPPORTED`) — TEOL termination not supported (v5+ firmware)
     N20,
-    /// N21 - Unknown Error
+    /// N21 — Unknown error
     N21,
-    /// N22 - Unknown Error
+    /// N22 — Unknown error
     N22,
-    /// N23 - Unknown Error
+    /// N23 — Unknown error
     N23,
-    /// N24 - System in Remote Upgrade
+    /// N24 (`ERROR_N24_SYSTEM_IN_REMOTE_UPGRADE_STATE`) — Remote upgrade in progress (v5+ firmware)
     N24,
-    /// N25 - CW Test Failed
+    /// N25 (`ERROR_N25_CW_TEST_FAILED`) — CW test failed (v5+ firmware)
     N25,
 }
 
@@ -102,32 +105,32 @@ impl PanelErrorCode {
     /// Human-readable description of the error code.
     pub fn description(&self) -> &'static str {
         match self {
-            Self::Bck2 => "Callback Error",
-            Self::N01 => "Error",
-            Self::N02 => "Unknown Error N02",
-            Self::N03 => "Unknown Error N03",
-            Self::N04 => "CRC Error",
+            Self::Bck2 => "Callback error",
+            Self::N01 => "General error",
+            Self::N02 => "Unknown error N02",
+            Self::N03 => "Unknown error N03",
+            Self::N04 => "CRC mismatch",
             Self::N05 => "Invalid parameter",
-            Self::N06 => "Invalid Value",
-            Self::N07 => "System Armed",
-            Self::N08 => "System Alarm",
-            Self::N09 => "Default Jumper",
-            Self::N10 => "System Not In Prog Mode",
-            Self::N11 => "System In Prog Mode",
-            Self::N12 => "System Not Ready to Arm",
-            Self::N13 => "General Error",
-            Self::N14 => "Device Does Not Support This Operation",
-            Self::N15 => "MS Locked",
-            Self::N16 => "System Busy",
-            Self::N17 => "Pin Code In Use",
-            Self::N18 => "System In RF Allocation Mode",
-            Self::N19 => "Device Doesn't Exist",
-            Self::N20 => "TEOL Termination Not Supported",
-            Self::N21 => "Unknown Error N21",
-            Self::N22 => "Unknown Error N22",
-            Self::N23 => "Unknown Error N23",
-            Self::N24 => "System in Remote Upgrade",
-            Self::N25 => "CW Test Failed",
+            Self::N06 => "Invalid value",
+            Self::N07 => "System armed",
+            Self::N08 => "System in alarm",
+            Self::N09 => "Default jumper present",
+            Self::N10 => "Not in programming mode",
+            Self::N11 => "Already in programming mode",
+            Self::N12 => "System not ready to arm",
+            Self::N13 => "General system error",
+            Self::N14 => "Incorrect utility output type",
+            Self::N15 => "Master siren locked",
+            Self::N16 => "Device busy",
+            Self::N17 => "PIN code already in use",
+            Self::N18 => "RF allocation mode active",
+            Self::N19 => "Device does not exist",
+            Self::N20 => "TEOL termination not supported",
+            Self::N21 => "Unknown error N21",
+            Self::N22 => "Unknown error N22",
+            Self::N23 => "Unknown error N23",
+            Self::N24 => "Remote upgrade in progress",
+            Self::N25 => "CW test failed",
         }
     }
 
