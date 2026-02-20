@@ -162,6 +162,71 @@ pub enum Command {
 }
 
 impl Command {
+    /// Per-command timeout in milliseconds.
+    ///
+    /// Per-command timeout values from the panel's protocol specification.
+    /// Commands without a specified timeout use a conservative 5000ms default.
+    ///
+    /// | Category             | Timeout     | Commands                              |
+    /// |----------------------|-------------|---------------------------------------|
+    /// | Programming entry    | 3500 ms     | `PROG=1`                              |
+    /// | Programming commands | 2000 ms     | Reads/writes while in prog mode       |
+    /// | Save / disconnect    | 1500 ms     | `SAVE`, `DCN`                         |
+    /// | Status/clock queries | 1200 ms     | `CLOCK`, `SSTT?`, module type queries |
+    /// | General queries      | 1000 ms     | Zone/partition/output batch queries    |
+    /// | Fast queries         | 600 ms      | `ELOG`, facility module reads          |
+    /// | Default              | 900 ms      | Base group default                    |
+    ///
+    /// Note: actual timeout passed to `tokio::time::timeout` in `CommandEngine`
+    /// also accounts for crypt test mode (500ms) and retry attempts.
+    pub fn timeout_ms(&self) -> u64 {
+        match self {
+            // Programming mode entry/exit: 3500ms
+            Command::EnableProgMode | Command::DisableProgMode => 3500,
+            // Disconnect: 1500ms
+            Command::Dcn => 1500,
+            // Clock / system status: 1200ms
+            Command::Clock | Command::SystemStatus | Command::SystemLabel => 1200,
+            // Auth commands: unencrypted, use generous timeout since this
+            // is during connection establishment
+            Command::Rmt { .. } | Command::Lcl => 5000,
+            // Batch device queries: 1000ms
+            Command::ZoneTypes { .. }
+            | Command::ZonePartitions { .. }
+            | Command::ZoneAreas { .. }
+            | Command::ZoneLabels { .. }
+            | Command::ZoneStatus { .. }
+            | Command::ZoneLinkType { .. }
+            | Command::OutputTypes { .. }
+            | Command::OutputLabels { .. }
+            | Command::OutputStatus { .. }
+            | Command::OutputGroups { .. }
+            | Command::OutputPulse { .. }
+            | Command::PartitionLabels { .. }
+            | Command::PartitionStatus { .. } => 1000,
+            // Arm/disarm/bypass/output: action commands, use general timeout
+            Command::ArmPartition { .. }
+            | Command::StayPartition { .. }
+            | Command::DisarmPartition { .. }
+            | Command::GroupArmPartition { .. }
+            | Command::ToggleBypassZone { .. }
+            | Command::ToggleOutput { .. } => 5000,
+            // Config queries (ELASEN, NTP, timezone): ~1200ms
+            Command::QueryCloudEnabled
+            | Command::SetCloudEnabled { .. }
+            | Command::QueryTimezone
+            | Command::SetTimezone { .. }
+            | Command::QueryNtpServer
+            | Command::SetNtpServer { .. }
+            | Command::QueryNtpPort
+            | Command::SetNtpPort { .. }
+            | Command::QueryNtpProtocol
+            | Command::SetNtpProtocol { .. } => 2000,
+            // Everything else: conservative default
+            _ => 5000,
+        }
+    }
+
     /// Convert the command to its wire string representation.
     pub fn to_wire_string(&self) -> String {
         match self {

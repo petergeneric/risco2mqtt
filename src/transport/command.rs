@@ -141,6 +141,7 @@ impl CommandEngine {
     /// Send a command and wait for a response.
     ///
     /// Retries up to 2 times on timeout with a fresh sequence ID.
+    /// see [`Command::timeout_ms`].
     pub async fn send_command(&self, command: &Command, is_prog_cmd: bool) -> Result<String> {
         let command_str = command.to_wire_string();
 
@@ -156,7 +157,7 @@ impl CommandEngine {
                 return Err(RiscoError::Disconnected);
             }
 
-            let timeout_duration = self.get_timeout().await;
+            let timeout_duration = self.get_timeout(command).await;
 
             if attempt > 1 {
                 debug!("Retrying command (attempt {}): {}", attempt, command_str);
@@ -274,14 +275,24 @@ impl CommandEngine {
         *seq += 1;
     }
 
-    /// Get the appropriate timeout duration based on current mode.
-    async fn get_timeout(&self) -> Duration {
+    /// Get the appropriate timeout duration for a command.
+    ///
+    /// During crypt test, a short 500ms timeout is used to quickly detect
+    /// wrong encryption keys. Otherwise, the per-command timeout from
+    /// [`Command::timeout_ms`] is used. During programming mode,
+    /// config read/write commands get a 2000ms timeout (default for
+    /// programming operations).
+    async fn get_timeout(&self, command: &Command) -> Duration {
         if *self.in_crypt_test.read().await {
             Duration::from_millis(500)
         } else if *self.in_prog.read().await {
-            Duration::from_secs(29)
+            // Programming mode: use the command's own timeout, but apply
+            // a 2000ms floor for config reads/writes (programming
+            // command default). PROG entry/exit already has 3500ms.
+            let cmd_ms = command.timeout_ms().max(2000);
+            Duration::from_millis(cmd_ms)
         } else {
-            Duration::from_secs(5)
+            Duration::from_millis(command.timeout_ms())
         }
     }
 
