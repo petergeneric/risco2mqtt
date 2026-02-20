@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use tokio::time::{sleep, Duration};
+use chrono::Timelike;
 use tracing::{debug, info, warn};
 
 use crate::config::{panel_limits, PanelConfig, PanelType};
@@ -102,6 +103,9 @@ impl RiscoComm {
         if !commands.is_empty() {
             self.modify_panel_config(&commands).await?;
         }
+
+        // Check and correct the panel clock
+        self.check_and_sync_clock().await;
 
         // Communication is ready
         info!("Panel communication ready");
@@ -294,6 +298,66 @@ impl RiscoComm {
         }
 
         Ok(())
+    }
+
+    /// Check the panel clock and correct it if it differs from local time by ≥ 1 minute.
+    ///
+    /// Sends `CLOCK` to read the panel's current date/time, parses the response
+    /// (format `DD/MM/YYYY HH:MM`), and compares it to the local system clock.
+    /// If the difference is 60 seconds or more, sends `CLOCK=<local_time>` to
+    /// correct the panel clock.
+    ///
+    /// Failures are logged as warnings; this method is always non-fatal.
+    async fn check_and_sync_clock(&self) {
+        let response = match self.send_command(&Command::Clock, false).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Cannot read panel clock: {}", e);
+                return;
+            }
+        };
+
+        let value = parse_value_after_eq(&response).trim().to_string();
+        let panel_time =
+            match chrono::NaiveDateTime::parse_from_str(&value, "%d/%m/%Y %H:%M") {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!("Cannot parse panel clock response '{}': {}", value, e);
+                    return;
+                }
+            };
+
+        let local_now = chrono::Local::now().naive_local();
+        // Truncate local time to minutes for a fair comparison (panel has no seconds)
+        let local_truncated = local_now
+            .with_second(0)
+            .and_then(|t| t.with_nanosecond(0))
+            .unwrap_or(local_now);
+
+        let diff_secs = (local_truncated - panel_time).num_seconds().abs();
+        if diff_secs >= 60 {
+            let corrected = local_now.format("%d/%m/%Y %H:%M").to_string();
+            info!(
+                "Panel clock is off by {}s (panel: {}, local: {}), correcting",
+                diff_secs, panel_time, local_truncated
+            );
+            match self
+                .send_command(&Command::SetClock { datetime: corrected }, false)
+                .await
+            {
+                Ok(resp) if is_ack(&resp) => {
+                    info!("Panel clock updated successfully");
+                }
+                Ok(resp) => {
+                    warn!("Panel clock update rejected: {}", resp);
+                }
+                Err(e) => {
+                    warn!("Panel clock update failed: {}", e);
+                }
+            }
+        } else {
+            debug!("Panel clock is accurate (off by {}s)", diff_secs);
+        }
     }
 
     /// Query all zone data from the panel.

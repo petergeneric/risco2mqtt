@@ -61,6 +61,11 @@ pub enum Command {
     /// Traffic: All. Timeout: 1200ms.
     /// Response format varies by `CLKFRMT` setting (e.g. `DD/MM/YYYY HH:MM`).
     Clock,
+    /// `CLOCK=<dd/MM/yyyy HH:mm>` — Set panel date/time.
+    /// Traffic: Send. Timeout: 1200ms.
+    /// Format is `dd/MM/yyyy HH:mm` (e.g. `20/02/2026 14:35`).
+    /// Returns ACK on success, N06 if the value is invalid.
+    SetClock { datetime: String },
     /// `PNLCNF` — Query panel hardware type (e.g. `RP432`, `RP512`).
     /// Traffic: All. Timeout: 1000ms.
     PanelConfig,
@@ -186,7 +191,7 @@ impl Command {
             // Disconnect: 1500ms
             Command::Dcn => 1500,
             // Clock / system status: 1200ms
-            Command::Clock | Command::SystemStatus | Command::SystemLabel => 1200,
+            Command::Clock | Command::SetClock { .. } | Command::SystemStatus | Command::SystemLabel => 1200,
             // Auth commands: unencrypted, use generous timeout since this
             // is during connection establishment
             Command::Rmt { .. } | Command::Lcl => 5000,
@@ -235,6 +240,7 @@ impl Command {
             Command::Dcn => "DCN".to_string(),
             Command::Ack => "ACK".to_string(),
             Command::Clock => "CLOCK".to_string(),
+            Command::SetClock { datetime } => format!("CLOCK={}", datetime),
             Command::PanelConfig => "PNLCNF".to_string(),
             Command::FirmwareVersion => "FSVER?".to_string(),
             Command::CustomerList => "CUSTLST?".to_string(),
