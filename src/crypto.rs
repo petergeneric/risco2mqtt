@@ -143,7 +143,12 @@ impl RiscoCrypt {
 
     /// Encode a command for transmission to the panel.
     ///
-    /// Produces the full wire frame: [STX][CRYPT?][encrypted_data][ETX]
+    /// Produces the full wire frame: `[STX][CRYPT?][encrypted_data][ETX]`
+    ///
+    /// The total frame size must not exceed [`MAX_PACKET_SIZE`](crate::constants::MAX_PACKET_SIZE)
+    /// (230 bytes) — the panel's `DeviceMaxBufferSize` from the Risco
+    /// Configuration Software device definitions. Frames exceeding this
+    /// limit may be silently truncated or rejected.
     ///
     /// # Arguments
     /// * `command` - The command string (e.g., "RMT=5678")

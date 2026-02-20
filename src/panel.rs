@@ -301,6 +301,12 @@ impl RiscoPanel {
 
     /// Start the watchdog task that sends CLOCK at the configured interval.
     ///
+    /// The full protocol idle-polls a broader set of commands
+    /// (`LCL, PNLCNF, ZALOC, IOALOC, SSTT, PSTT 1-3, ZSTT 1-36, CLOCK,
+    /// UOSTT 1-4, BOOTRES`). We use a simpler CLOCK-only keepalive, relying
+    /// on unsolicited panel pushes for real-time status updates. The CLOCK
+    /// command has a 1200ms timeout.
+    ///
     /// The watchdog is resilient to command errors — it logs them and continues
     /// sending CLOCK. Only an explicit shutdown signal stops the task. This
     /// matches the JS implementation where the watchdog catches errors and
@@ -580,6 +586,10 @@ impl RiscoPanel {
     ///
     /// Called when the transport layer receives an unsolicited status message
     /// (ZSTT, PSTT, OSTT, SSTT) so that cached device state stays in sync.
+    ///
+    /// `BOOTRES` (panel reboot notification) is handled at the transport layer
+    /// in [`emit_panel_data`](crate::transport::direct) by triggering a
+    /// disconnect/reconnect cycle, since all session state becomes invalid.
     pub async fn route_panel_data(&self, data: &str) {
         if data.starts_with("ZSTT") {
             self.handle_zone_status(data).await;

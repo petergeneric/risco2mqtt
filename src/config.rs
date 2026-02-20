@@ -17,7 +17,23 @@ pub enum PanelType {
     WiComm,
     /// WiCommPro (RW332): 36 zones, 3 partitions, 4 outputs
     WiCommPro,
-    /// LightSys (RP432): 32-50 zones (FW dependent), 4 partitions, 14-32 outputs (FW dependent)
+    /// LightSys (RP432): 32-50 zones (FW dependent), 4 partitions, 14-32 outputs (FW dependent).
+    ///
+    /// Hardware capacity:
+    /// - 50 zones total (8 on-board + up to 6 zone expanders)
+    /// - 4 partitions
+    /// - 4 keypads (wired), 3 additional wireless
+    /// - 16 keyfobs
+    /// - 8 proximity readers
+    /// - 4 sirens (wired/bus), 3 additional wireless
+    /// - 32 outputs (utility)
+    /// - 3 monitoring stations
+    /// - 6 zone expanders, 4 bus zone expanders
+    /// - 2 wireless module expanders
+    /// - 4 power supplies
+    ///
+    /// FW >= 3.0 unlocks full 50-zone / 32-output capacity; older firmware
+    /// is limited to 32 zones / 14 outputs. CloudTCPIP support requires FW >= 2.4.
     LightSys,
     /// LightSys Plus (RP432MP): 512 zones, 32 partitions, 196 outputs
     LightSysPlus,

@@ -22,6 +22,23 @@ use crate::transport::direct::DirectTcpTransport;
 ///
 /// Manages the connection lifecycle, panel verification, device discovery,
 /// and real-time status updates.
+///
+/// # Connection Sequence
+///
+/// Our connect sequence is a simplified version of the full protocol
+/// handshake (see [`Command`](crate::protocol::Command) for the
+/// full bundle). We perform:
+///
+/// 1. TCP connect → 10s delay → `RMT` auth → `LCL` → crypt test
+/// 2. `PNLCNF` — verify/discover panel hardware type
+/// 3. `FSVER?` — query firmware version (LightSys/ProsysPlus/GTPlus only)
+/// 4. Config verification (cloud, timezone, NTP) with programming mode
+/// 5. Device discovery: batch queries for zones, partitions, outputs, system
+///
+/// The full protocol additionally fetches allocation bitmaps
+/// (`ZALOC`, `KPALOC`, `UOALOC`, etc.) for efficient peripheral discovery.
+/// We use batch queries with N19 ("Device Doesn't Exist") early termination
+/// instead, which is simpler but slower.
 pub struct RiscoComm {
     config: PanelConfig,
     direct_transport: Option<DirectTcpTransport>,

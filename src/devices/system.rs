@@ -4,9 +4,12 @@
 use bitflags::bitflags;
 
 bitflags! {
-    /// System status flags parsed from the 21-character status string.
+    /// System status flags parsed from the 24-character SSTT response string.
     ///
     /// Flag positions: `B A P C D 1 2 3 X J I L M W U R S F E Y V T Z Q`
+    ///
+    /// Queried via `SSTT?` (system/siren status). Traffic: All, timeout 1200ms.
+    /// The panel also sends unsolicited SSTT updates on state changes.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct SystemStatusFlags: u32 {
         /// B - Low battery trouble
