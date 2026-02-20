@@ -774,11 +774,16 @@ async fn handle_command(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // RUST_LOG controls verbosity (e.g. RUST_LOG=debug or RUST_LOG=risco_lan_bridge=trace).
+    // Default: info.
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
     // systemd journal already adds timestamps, so omit them when running under systemd
     if std::env::var_os("JOURNAL_STREAM").is_some() {
-        tracing_subscriber::fmt().without_time().init();
+        tracing_subscriber::fmt().without_time().with_env_filter(env_filter).init();
     } else {
-        tracing_subscriber::fmt::init();
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 
     let cli = Cli::parse();
