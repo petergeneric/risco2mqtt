@@ -171,6 +171,10 @@ pub struct PanelConfig {
     /// If no data is received from the panel within this period, the
     /// connection is considered stale and a reconnection is triggered.
     pub socket_timeout_ms: u64,
+    /// Maximum number of commands to send concurrently (default: 1, no pipelining).
+    /// Values above 1 allow multiple commands to be in-flight simultaneously,
+    /// using distinct sequence IDs (1-49). Must be at least 1.
+    pub concurrent_commands: usize,
 }
 
 impl Default for PanelConfig {
@@ -191,6 +195,7 @@ impl Default for PanelConfig {
             ntp_port: "123".to_string(),
             watchdog_interval_ms: 5000,
             socket_timeout_ms: 30000,
+            concurrent_commands: 1,
         }
     }
 }
@@ -281,6 +286,11 @@ impl PanelConfigBuilder {
 
     pub fn socket_timeout_ms(mut self, ms: u64) -> Self {
         self.config.socket_timeout_ms = ms;
+        self
+    }
+
+    pub fn concurrent_commands(mut self, n: usize) -> Self {
+        self.config.concurrent_commands = n.max(1);
         self
     }
 

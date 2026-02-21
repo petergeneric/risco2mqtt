@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedWriteHalf;
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{oneshot, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use tracing::{debug, error, warn};
 
@@ -45,6 +45,8 @@ pub struct CommandEngine {
     pub crypt_key_valid: Arc<RwLock<Option<bool>>>,
     /// Last received unsolicited message ID (for dedup)
     last_received_unsolicited_id: Arc<Mutex<Option<u8>>>,
+    /// Semaphore limiting the number of commands in-flight simultaneously
+    pipeline_semaphore: Semaphore,
 }
 
 const BAD_CRC_LIMIT: u32 = 10;
@@ -54,6 +56,7 @@ impl CommandEngine {
     pub fn new(
         writer: OwnedWriteHalf,
         crypt: RiscoCrypt,
+        concurrent_commands: usize,
     ) -> Self {
         Self {
             sequence_id: Arc::new(Mutex::new(1)),
@@ -70,6 +73,7 @@ impl CommandEngine {
             last_received_buffer: Arc::new(Mutex::new(None)),
             crypt_key_valid: Arc::new(RwLock::new(None)),
             last_received_unsolicited_id: Arc::new(Mutex::new(None)),
+            pipeline_semaphore: Semaphore::new(concurrent_commands.max(1)),
         }
     }
 
@@ -141,14 +145,23 @@ impl CommandEngine {
     /// Send a command and wait for a response.
     ///
     /// Retries up to 2 times on timeout with a fresh sequence ID.
+    /// Concurrent callers are bounded by the pipeline semaphore
+    /// (`concurrent_commands` from config). Each in-flight command
+    /// claims a unique sequence ID (1-49) immediately at send time.
     /// see [`Command::timeout_ms`].
     pub async fn send_command(&self, command: &Command, is_prog_cmd: bool) -> Result<String> {
         let command_str = command.to_wire_string();
 
-        // Wait while in prog mode and this is not a prog command
+        // Wait while in prog mode and this is not a prog command.
+        // Do this before acquiring the pipeline slot so we don't hold
+        // a permit while spinning.
         while *self.in_prog.read().await && !is_prog_cmd {
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
+
+        // Acquire a pipeline slot. The permit is held for all retry attempts
+        // of this logical command and released automatically on return.
+        let _permit = self.pipeline_semaphore.acquire().await.unwrap();
 
         let max_attempts = 3u8;
 
@@ -167,8 +180,11 @@ impl CommandEngine {
 
             let (tx, rx) = oneshot::channel();
             let cmd_id = {
-                let seq = self.sequence_id.lock().await;
+                let mut seq = self.sequence_id.lock().await;
                 let id = *seq;
+                // Advance immediately so concurrent callers each get a distinct ID.
+                *seq = if *seq >= 49 { 1 } else { *seq + 1 };
+                drop(seq);
                 self.pending.lock().await.insert(id, tx);
                 id
             };
@@ -194,7 +210,6 @@ impl CommandEngine {
             match timeout(timeout_duration, rx).await {
                 Ok(Ok(response)) => {
                     debug!("Received response for seq {}: {}", cmd_id, response);
-                    self.increment_sequence_id().await;
                     return Ok(response);
                 }
                 Ok(Err(_)) => {
@@ -205,7 +220,6 @@ impl CommandEngine {
                 Err(_) => {
                     // Timeout — clean up and maybe retry
                     self.pending.lock().await.remove(&cmd_id);
-                    self.increment_sequence_id().await;
                     if attempt == max_attempts {
                         debug!("Command timeout after {} attempts: {} {}", max_attempts, cmd_id_str, command_str);
                         return Err(RiscoError::CommandTimeout {
@@ -264,15 +278,6 @@ impl CommandEngine {
         let mut writer = self.writer.lock().await;
         writer.write_all(&encoded).await.map_err(RiscoError::Io)?;
         Ok(())
-    }
-
-    /// Increment sequence ID (wraps 1-49).
-    async fn increment_sequence_id(&self) {
-        let mut seq = self.sequence_id.lock().await;
-        if *seq >= 49 {
-            *seq = 0;
-        }
-        *seq += 1;
     }
 
     /// Get the appropriate timeout duration for a command.

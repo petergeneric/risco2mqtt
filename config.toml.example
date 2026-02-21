@@ -11,6 +11,7 @@ reconnect_delay_ms = 2000
 ntp_server = "192.168.1.1"
 ntp_port = "123"
 disable_risco_cloud = true
+# concurrent_commands = 1   # commands in-flight simultaneously (default: 1)
 
 [mqtt]
 url = "mqtt://127.0.0.1:1883"

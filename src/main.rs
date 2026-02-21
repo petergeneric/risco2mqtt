@@ -85,6 +85,8 @@ struct PanelToml {
     watchdog_interval_ms: u64,
     #[serde(default = "default_socket_timeout")]
     socket_timeout_ms: u64,
+    #[serde(default = "default_concurrent_commands")]
+    concurrent_commands: usize,
 }
 
 fn default_panel_port() -> u16 {
@@ -110,6 +112,9 @@ fn default_watchdog_interval() -> u64 {
 }
 fn default_socket_timeout() -> u64 {
     30000
+}
+fn default_concurrent_commands() -> usize {
+    1
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,6 +178,7 @@ fn build_panel_config(toml: &PanelToml) -> Result<PanelConfig> {
         .disable_risco_cloud(toml.disable_risco_cloud)
         .watchdog_interval_ms(toml.watchdog_interval_ms)
         .socket_timeout_ms(toml.socket_timeout_ms)
+        .concurrent_commands(toml.concurrent_commands)
         .build())
 }
 

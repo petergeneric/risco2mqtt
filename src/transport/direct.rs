@@ -45,7 +45,7 @@ impl DirectTcpTransport {
 
         let (reader, writer) = stream.into_split();
         let crypt = RiscoCrypt::new(config.panel_id);
-        let command_engine = Arc::new(CommandEngine::new(writer, crypt));
+        let command_engine = Arc::new(CommandEngine::new(writer, crypt, config.concurrent_commands));
 
         // Spawn reader task with socket-level read timeout
         let socket_timeout = Duration::from_millis(config.socket_timeout_ms.max(1000));
