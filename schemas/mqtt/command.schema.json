@@ -23,6 +23,16 @@
     "op_id": { "type": "string" },
     "zone": { "type": "integer" },
     "partition": { "type": "integer" },
-    "group": { "type": "integer" }
+    "group": { "type": "integer" },
+    "exclude_if_tripped": {
+      "type": "array",
+      "items": { "type": "integer" },
+      "description": "Zone IDs to bypass only if currently open/tripped"
+    },
+    "always_exclude": {
+      "type": "array",
+      "items": { "type": "integer" },
+      "description": "Zone IDs to bypass unconditionally before arming"
+    }
   }
 }

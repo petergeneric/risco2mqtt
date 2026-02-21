@@ -814,6 +814,64 @@ fn command_extra_field_rejected() {
     );
 }
 
+#[test]
+fn command_arm_away_with_always_exclude() {
+    validate(
+        "command.schema.json",
+        &json!({ "op": "ARM_AWAY", "partition": 1, "always_exclude": [6, 7] }),
+    );
+}
+
+#[test]
+fn command_arm_away_with_exclude_if_tripped() {
+    validate(
+        "command.schema.json",
+        &json!({ "op": "ARM_AWAY", "partition": 1, "exclude_if_tripped": [3] }),
+    );
+}
+
+#[test]
+fn command_arm_away_with_both_exclusions() {
+    validate(
+        "command.schema.json",
+        &json!({
+            "op": "ARM_AWAY",
+            "partition": 1,
+            "always_exclude": [6],
+            "exclude_if_tripped": [3, 4]
+        }),
+    );
+}
+
+#[test]
+fn command_arm_group_with_exclusions() {
+    validate(
+        "command.schema.json",
+        &json!({
+            "op": "ARM_GROUP",
+            "partition": 1,
+            "group": 2,
+            "always_exclude": [5]
+        }),
+    );
+}
+
+#[test]
+fn command_exclusion_empty_arrays() {
+    validate(
+        "command.schema.json",
+        &json!({ "op": "ARM_HOME_STAY", "partition": 1, "always_exclude": [], "exclude_if_tripped": [] }),
+    );
+}
+
+#[test]
+fn command_exclusion_string_in_array_rejected() {
+    validate_fails(
+        "command.schema.json",
+        &json!({ "op": "ARM_AWAY", "partition": 1, "always_exclude": ["six"] }),
+    );
+}
+
 // =========================================================================
 // Negative tests — wrong types
 // =========================================================================

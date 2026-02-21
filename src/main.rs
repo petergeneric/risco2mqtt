@@ -89,6 +89,8 @@ struct PanelToml {
     concurrent_commands: usize,
     #[serde(default = "default_connect_delay")]
     connect_delay_ms: u64,
+    #[serde(default = "default_arm_ready_timeout")]
+    arm_ready_timeout_ms: u64,
 }
 
 fn default_panel_port() -> u16 {
@@ -120,6 +122,9 @@ fn default_concurrent_commands() -> usize {
 }
 fn default_connect_delay() -> u64 {
     10000
+}
+fn default_arm_ready_timeout() -> u64 {
+    5000
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,6 +292,10 @@ struct MqttCommand {
     partition: Option<u32>,
     #[serde(default)]
     group: Option<u8>,
+    #[serde(default)]
+    exclude_if_tripped: Vec<u32>,
+    #[serde(default)]
+    always_exclude: Vec<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -781,6 +790,252 @@ async fn handle_command(
 }
 
 // ---------------------------------------------------------------------------
+// ARM with zone exclusions
+// ---------------------------------------------------------------------------
+
+/// Arm result details for CMD_ACK data field.
+#[derive(Serialize)]
+struct ArmResult {
+    status: String,
+    bypassed_zones: Vec<u32>,
+    waited_for_ready: bool,
+}
+
+/// Determines the `ArmType` for the given operation string, or `None` for group arm.
+fn arm_op_type(op: &str) -> Option<ArmType> {
+    match op {
+        "ARM_AWAY" => Some(ArmType::Away),
+        "ARM_HOME_STAY" => Some(ArmType::Stay),
+        _ => None,
+    }
+}
+
+/// Handle an ARM command with optional zone exclusions and ready-wait.
+///
+/// This function manages its own mutex acquisition because it needs to release
+/// the lock between the bypass phase and the wait-for-ready phase (so Task 1
+/// can process PanelData events and update partition status).
+async fn handle_arm_with_exclusions(
+    payload_str: &str,
+    cmd: &MqttCommand,
+    client: &AsyncClient,
+    topic: &str,
+    panel: &Arc<Mutex<RiscoPanel>>,
+    arm_ready_timeout_ms: u64,
+) {
+    let src_json = serde_json::from_str::<serde_json::Value>(payload_str).ok();
+    let partition_id = cmd.partition.unwrap_or(1);
+    let op = cmd.op.as_str();
+
+    let result = arm_with_exclusions(
+        op,
+        partition_id,
+        cmd.group,
+        &cmd.always_exclude,
+        &cmd.exclude_if_tripped,
+        panel,
+        arm_ready_timeout_ms,
+    )
+    .await;
+
+    let success = result.status == "ok";
+    let data = serde_json::to_value(&result).ok();
+    publish_cmd_ack(client, topic, success, src_json, data).await;
+}
+
+/// Three-phase ARM orchestration: bypass → wait-for-ready → arm.
+async fn arm_with_exclusions(
+    op: &str,
+    partition_id: u32,
+    group: Option<u8>,
+    always_exclude: &[u32],
+    exclude_if_tripped: &[u32],
+    panel: &Arc<Mutex<RiscoPanel>>,
+    timeout_ms: u64,
+) -> ArmResult {
+    let mut bypassed_zones: Vec<u32> = Vec::new();
+
+    // Phase 1: Subscribe + Bypass (mutex held)
+    let (mut event_rx, needs_wait) = {
+        let panel_lock = panel.lock().await;
+
+        // Subscribe BEFORE mutations to avoid missing partition-ready events
+        let rx = panel_lock.subscribe();
+
+        // Bypass zones in always_exclude
+        for &zone_id in always_exclude {
+            match panel_lock.zone(zone_id).await {
+                Some(z) => {
+                    if z.is_bypassed() {
+                        debug!("Zone {zone_id} already bypassed, skipping");
+                        continue;
+                    }
+                    if exec_panel_cmd("BYPASS", &format!("zone {zone_id}"), panel_lock.toggle_bypass_zone(zone_id)).await {
+                        bypassed_zones.push(zone_id);
+                    } else {
+                        warn!("Failed to bypass zone {zone_id}, aborting ARM");
+                        return ArmResult {
+                            status: "bypass_failed".to_string(),
+                            bypassed_zones,
+                            waited_for_ready: false,
+                        };
+                    }
+                }
+                None => {
+                    warn!("Zone {zone_id} not found, skipping");
+                }
+            }
+        }
+
+        // Bypass zones in exclude_if_tripped (only if open)
+        for &zone_id in exclude_if_tripped {
+            match panel_lock.zone(zone_id).await {
+                Some(z) => {
+                    if z.is_bypassed() {
+                        debug!("Zone {zone_id} already bypassed, skipping");
+                        continue;
+                    }
+                    if !z.is_open() {
+                        debug!("Zone {zone_id} not tripped, skipping");
+                        continue;
+                    }
+                    if exec_panel_cmd("BYPASS", &format!("zone {zone_id}"), panel_lock.toggle_bypass_zone(zone_id)).await {
+                        bypassed_zones.push(zone_id);
+                    } else {
+                        warn!("Failed to bypass zone {zone_id}, aborting ARM");
+                        return ArmResult {
+                            status: "bypass_failed".to_string(),
+                            bypassed_zones,
+                            waited_for_ready: false,
+                        };
+                    }
+                }
+                None => {
+                    warn!("Zone {zone_id} not found, skipping");
+                }
+            }
+        }
+
+        // Check if partition is already ready
+        let already_ready = match panel_lock.partition(partition_id).await {
+            Some(p) => p.is_ready() && !p.is_open(),
+            None => false,
+        };
+
+        if already_ready {
+            // Arm immediately
+            let success = execute_arm(&panel_lock, op, partition_id, group).await;
+            return ArmResult {
+                status: if success { "ok" } else { "arm_failed" }.to_string(),
+                bypassed_zones,
+                waited_for_ready: false,
+            };
+        }
+
+        // If no bypasses were performed and partition isn't ready, we still wait
+        // (the plan says to wait regardless)
+        (rx, !already_ready)
+    };
+    // Mutex released here
+
+    if !needs_wait {
+        // Should not reach here since we return above, but just in case
+        return ArmResult {
+            status: "ok".to_string(),
+            bypassed_zones,
+            waited_for_ready: false,
+        };
+    }
+
+    // Phase 2: Wait for partition ready (mutex released)
+    info!("Waiting for partition {partition_id} to become ready (timeout {timeout_ms}ms)");
+    let ready = wait_for_partition_ready(&mut event_rx, partition_id, timeout_ms).await;
+
+    if !ready {
+        warn!("Timeout waiting for partition {partition_id} to become ready");
+        return ArmResult {
+            status: "timeout".to_string(),
+            bypassed_zones,
+            waited_for_ready: true,
+        };
+    }
+
+    // Phase 3: Arm (re-acquire mutex)
+    info!("Partition {partition_id} ready, sending ARM command");
+    let panel_lock = panel.lock().await;
+    let success = execute_arm(&panel_lock, op, partition_id, group).await;
+
+    ArmResult {
+        status: if success { "ok" } else { "arm_failed" }.to_string(),
+        bypassed_zones,
+        waited_for_ready: true,
+    }
+}
+
+/// Execute the appropriate arm command on the panel.
+async fn execute_arm(panel: &RiscoPanel, op: &str, partition_id: u32, group: Option<u8>) -> bool {
+    if op == "ARM_GROUP" {
+        let group = group.unwrap_or(1);
+        let label = format!("partition {partition_id} group {group}");
+        exec_panel_cmd("ARM_GROUP", &label, panel.group_arm_partition(partition_id, group)).await
+    } else {
+        let arm_type = arm_op_type(op).unwrap_or(ArmType::Away);
+        let label = format!("partition {partition_id}");
+        exec_panel_cmd(op, &label, panel.arm_partition(partition_id, arm_type)).await
+    }
+}
+
+/// Wait for a partition to become ready by listening to broadcast events.
+/// Returns `true` if the partition became ready, `false` on timeout or channel close.
+async fn wait_for_partition_ready(
+    rx: &mut tokio::sync::broadcast::Receiver<PanelEvent>,
+    partition_id: u32,
+    timeout_ms: u64,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Ok(PanelEvent::PartitionStatusChanged {
+                partition_id: pid,
+                new_status,
+                ..
+            })) => {
+                if pid == partition_id
+                    && new_status.contains(PartitionStatusFlags::READY)
+                    && !new_status.contains(PartitionStatusFlags::OPEN)
+                {
+                    return true;
+                }
+            }
+            Ok(Ok(_)) => {
+                // Other event, keep waiting
+            }
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(n))) => {
+                warn!("Event receiver lagged during ARM wait, missed {n} events");
+                // Continue waiting — we may still get the ready event
+            }
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                error!("Event channel closed during ARM wait");
+                return false;
+            }
+            Err(_) => {
+                // Timeout
+                return false;
+            }
+        }
+    }
+}
+
+/// Returns `true` if this is an ARM operation that should use the exclusions path.
+fn is_arm_op(op: &str) -> bool {
+    matches!(op, "ARM_AWAY" | "ARM_HOME_STAY" | "ARM_GROUP")
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -810,6 +1065,7 @@ async fn main() -> Result<()> {
     let mut publish_topic = config.mqtt.publish_topic;
     let mut subscribe_topic = config.mqtt.subscribe_topic;
     let mut snapshot_interval_secs = config.mqtt.snapshot_interval_secs;
+    let mut arm_ready_timeout_ms = config.panel.arm_ready_timeout_ms;
     let mut zone_names = Arc::new(config.zone_names);
 
     let (mut mqtt_host, mut mqtt_port) = parse_mqtt_url(&config.mqtt.url)?;
@@ -960,6 +1216,7 @@ async fn main() -> Result<()> {
         let topic_cmds = publish_topic.clone();
         let zn_cmds = Arc::clone(&zone_names);
         let sub_topic = subscribe_topic.clone();
+        let arm_timeout = arm_ready_timeout_ms;
         let mqtt_handle = tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
@@ -985,16 +1242,34 @@ async fn main() -> Result<()> {
                                     } else {
                                         info!("MQTT command received: {payload}");
                                     }
-                                    let panel_lock = panel_cmds.lock().await;
-                                    handle_command(
-                                        &payload,
-                                        cmd,
-                                        &client_cmds,
-                                        &topic_cmds,
-                                        &panel_lock,
-                                        &zn_cmds,
-                                    )
-                                    .await;
+                                    // ARM operations with exclusions manage their
+                                    // own mutex so Task 1 can process events
+                                    // between the bypass and arm phases.
+                                    if is_arm_op(&cmd.op)
+                                        && (!cmd.always_exclude.is_empty()
+                                            || !cmd.exclude_if_tripped.is_empty())
+                                    {
+                                        handle_arm_with_exclusions(
+                                            &payload,
+                                            &cmd,
+                                            &client_cmds,
+                                            &topic_cmds,
+                                            &panel_cmds,
+                                            arm_timeout,
+                                        )
+                                        .await;
+                                    } else {
+                                        let panel_lock = panel_cmds.lock().await;
+                                        handle_command(
+                                            &payload,
+                                            cmd,
+                                            &client_cmds,
+                                            &topic_cmds,
+                                            &panel_lock,
+                                            &zn_cmds,
+                                        )
+                                        .await;
+                                    }
                                 }
                                 Err(e) => {
                                     warn!("Failed to parse MQTT command: {e}");
@@ -1088,6 +1363,7 @@ async fn main() -> Result<()> {
                         publish_topic = new_config.mqtt.publish_topic;
                         subscribe_topic = new_config.mqtt.subscribe_topic;
                         snapshot_interval_secs = new_config.mqtt.snapshot_interval_secs;
+                        arm_ready_timeout_ms = new_config.panel.arm_ready_timeout_ms;
                         zone_names = Arc::new(new_config.zone_names);
                         info!("Config reloaded successfully");
                     }
