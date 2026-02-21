@@ -209,6 +209,9 @@ impl CommandEngine {
             // Wait for response with timeout
             match timeout(timeout_duration, rx).await {
                 Ok(Ok(response)) => {
+                    if attempt > 1 {
+                        warn!("Command succeeded on retry (attempt {}/{}): {}", attempt, max_attempts, command_str);
+                    }
                     debug!("Received response for seq {}: {}", cmd_id, response);
                     return Ok(response);
                 }
@@ -226,7 +229,7 @@ impl CommandEngine {
                             command: command_str.clone(),
                         });
                     }
-                    warn!("Command timeout (attempt {}/{}): {}", attempt, max_attempts, command_str);
+                    warn!("Command timeout (attempt {}/{}, {}ms): {}", attempt, max_attempts, timeout_duration.as_millis(), command_str);
                 }
             }
         }
