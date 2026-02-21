@@ -87,6 +87,8 @@ struct PanelToml {
     socket_timeout_ms: u64,
     #[serde(default = "default_concurrent_commands")]
     concurrent_commands: usize,
+    #[serde(default = "default_connect_delay")]
+    connect_delay_ms: u64,
 }
 
 fn default_panel_port() -> u16 {
@@ -115,6 +117,9 @@ fn default_socket_timeout() -> u64 {
 }
 fn default_concurrent_commands() -> usize {
     1
+}
+fn default_connect_delay() -> u64 {
+    10000
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +184,7 @@ fn build_panel_config(toml: &PanelToml) -> Result<PanelConfig> {
         .watchdog_interval_ms(toml.watchdog_interval_ms)
         .socket_timeout_ms(toml.socket_timeout_ms)
         .concurrent_commands(toml.concurrent_commands)
+        .connect_delay_ms(toml.connect_delay_ms)
         .build())
 }
 

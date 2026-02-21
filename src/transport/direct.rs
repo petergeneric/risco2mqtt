@@ -27,7 +27,7 @@ pub struct DirectTcpTransport {
 impl DirectTcpTransport {
     /// Connect to the panel and establish an authenticated, encrypted session.
     ///
-    /// Sequence: TCP connect → 10s delay → RMT auth → LCL → crypt test → PanelConnected
+    /// Sequence: TCP connect → connect_delay_seconds delay → RMT auth → LCL → crypt test → PanelConnected
     pub async fn connect(config: &PanelConfig, event_tx: EventSender) -> Result<Self> {
         info!(
             "Connecting to panel at {}:{}",
@@ -62,9 +62,10 @@ impl DirectTcpTransport {
             reader_handle: Some(reader_handle),
         };
 
-        // Mandatory 10-second delay before sending RMT
-        info!("Connection establishment will start in 10 seconds...");
-        sleep(Duration::from_secs(10)).await;
+        // Mandatory delay before sending RMT
+        let connect_delay_ms = config.connect_delay_ms;
+        info!("Connection establishment will start in {:.1} seconds...", connect_delay_ms as f64 / 1000.0);
+        sleep(Duration::from_millis(connect_delay_ms)).await;
 
         // Authenticate
         let password = &config.panel_password;

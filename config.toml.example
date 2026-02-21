@@ -12,6 +12,7 @@ ntp_server = "192.168.1.1"
 ntp_port = "123"
 disable_risco_cloud = true
 # concurrent_commands = 1   # commands in-flight simultaneously (default: 1)
+# connect_delay_ms = 10000     # delay after TCP connect before auth (default: 10000)
 
 [mqtt]
 url = "mqtt://127.0.0.1:1883"

@@ -175,6 +175,8 @@ pub struct PanelConfig {
     /// Values above 1 allow multiple commands to be in-flight simultaneously,
     /// using distinct sequence IDs (1-49). Must be at least 1.
     pub concurrent_commands: usize,
+    /// Delay in milliseconds after TCP connect before sending the first command (default: 10000).
+    pub connect_delay_ms: u64,
 }
 
 impl Default for PanelConfig {
@@ -196,6 +198,7 @@ impl Default for PanelConfig {
             watchdog_interval_ms: 5000,
             socket_timeout_ms: 30000,
             concurrent_commands: 1,
+            connect_delay_ms: 10000,
         }
     }
 }
@@ -291,6 +294,11 @@ impl PanelConfigBuilder {
 
     pub fn concurrent_commands(mut self, n: usize) -> Self {
         self.config.concurrent_commands = n.max(1);
+        self
+    }
+
+    pub fn connect_delay_ms(mut self, ms: u64) -> Self {
+        self.config.connect_delay_ms = ms;
         self
     }
 
