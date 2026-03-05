@@ -1,6 +1,7 @@
 # risco2mqtt
 
-This program is based on a Rust rewrite of the TypeScript [risco-lan-bridge](https://github.com/vanackej/risco-lan-bridge/), built for more resource-constrained environments. It is intended to be used as a "bridge" between an application communicating via MQTT and a Risco alarm Panel (can also work with Electronic Line products but this has not been tested).
+This program is based on a Rust rewrite of the TypeScript [risco-lan-bridge](https://github.com/vanackej/risco-lan-bridge/), built for more resource-constrained environments (required memory 3-4MB).
+It is intended to be used as a "bridge" between an application communicating via MQTT and a Risco alarm Panel (can also work with Electronic Line products but this has not been tested).
 
 ## Compatibility
 Compatible with these central units and these features:
