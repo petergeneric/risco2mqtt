@@ -144,7 +144,6 @@ pub struct Partition {
     pub label: String,
     pub status: PartitionStatusFlags,
     pub first_status: bool,
-    pub need_update_config: bool,
 }
 
 impl Partition {
@@ -154,7 +153,6 @@ impl Partition {
             label: String::new(),
             status: PartitionStatusFlags::empty(),
             first_status: true,
-            need_update_config: false,
         }
     }
 

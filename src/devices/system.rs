@@ -176,7 +176,6 @@ pub struct MBSystem {
     pub label: String,
     pub status: SystemStatusFlags,
     pub first_status: bool,
-    pub need_update_config: bool,
 }
 
 impl MBSystem {
@@ -186,7 +185,6 @@ impl MBSystem {
             label,
             status,
             first_status: true,
-            need_update_config: false,
         }
     }
 

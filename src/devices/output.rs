@@ -50,7 +50,6 @@ pub struct Output {
     pub pulse_delay_ms: u64,
     pub user_usable: bool,
     pub first_status: bool,
-    pub need_update_config: bool,
 }
 
 impl Output {
@@ -63,7 +62,6 @@ impl Output {
             pulse_delay_ms: 0,
             user_usable: false,
             first_status: true,
-            need_update_config: false,
         }
     }
 

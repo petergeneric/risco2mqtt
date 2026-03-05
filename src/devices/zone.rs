@@ -168,7 +168,6 @@ pub struct Zone {
     pub groups: Vec<char>,
     pub status: ZoneStatusFlags,
     pub first_status: bool,
-    pub need_update_config: bool,
 }
 
 impl Zone {
@@ -182,7 +181,6 @@ impl Zone {
             groups: Vec::new(),
             status: ZoneStatusFlags::empty(),
             first_status: true,
-            need_update_config: false,
         }
     }
 
