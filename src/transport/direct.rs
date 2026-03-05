@@ -229,12 +229,12 @@ fn spawn_reader_task(
                     break;
                 }
                 Ok(Ok(n)) => {
-                    let mut data = leftover.clone();
-                    data.extend_from_slice(&buf[..n]);
-                    leftover.clear();
+                    leftover.extend_from_slice(&buf[..n]);
 
                     // Split on ETX+STX boundary (multiple messages in one read)
-                    let messages = split_messages(&data, &mut leftover);
+                    let mut new_leftover = Vec::new();
+                    let messages = split_messages(&leftover, &mut new_leftover);
+                    leftover = new_leftover;
 
                     for msg in messages {
                         process_message(&msg, &engine, &event_tx).await;
