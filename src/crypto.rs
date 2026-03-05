@@ -153,12 +153,16 @@ impl RiscoCrypt {
     /// # Arguments
     /// * `command` - The command string (e.g., "RMT=5678")
     /// * `cmd_id` - The 2-digit command ID string (e.g., "01")
-    /// * `force_crypt` - Override encryption: Some(true) forces on, Some(false) forces off, None uses current state
+    /// * `show_crypt_indicator` - Whether to include the CRYPT indicator byte (0x11)
+    ///   in the frame header. `Some(true)` forces the indicator on, `Some(false)`
+    ///   forces it off, `None` follows `crypt_enabled`. Note: the actual XOR
+    ///   encryption of the payload is always governed by `crypt_enabled`,
+    ///   regardless of this parameter.
     pub fn encode_command(
         &mut self,
         command: &str,
         cmd_id: &str,
-        force_crypt: Option<bool>,
+        show_crypt_indicator: Option<bool>,
     ) -> Vec<u8> {
         self.crypt_pos = 0;
         let mut encrypted = Vec::new();
@@ -166,8 +170,8 @@ impl RiscoCrypt {
         // Start of frame
         encrypted.push(STX);
 
-        // Encryption indicator byte: controlled by force_crypt or crypt_enabled
-        let show_crypt = force_crypt.unwrap_or(self.crypt_enabled);
+        // CRYPT indicator byte in frame header
+        let show_crypt = show_crypt_indicator.unwrap_or(self.crypt_enabled);
         if show_crypt {
             encrypted.push(CRYPT);
         }
@@ -497,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn test_force_crypt_parameter() {
+    fn test_show_crypt_indicator_parameter() {
         let mut crypt = RiscoCrypt::new(1234);
         crypt.set_crypt_enabled(false);
 

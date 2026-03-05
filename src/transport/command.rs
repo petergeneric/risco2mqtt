@@ -259,11 +259,13 @@ impl CommandEngine {
 
     /// Send a raw command without waiting for response (e.g., DCN on disconnect).
     ///
-    /// `force_crypt` overrides the current encryption state when encoding:
-    /// - `Some(false)` forces unencrypted (used for DCN when crypt key may be wrong)
-    /// - `Some(true)` forces encrypted
-    /// - `None` uses the current crypt state
-    pub async fn send_raw(&self, command: &Command, force_crypt: Option<bool>) -> Result<()> {
+    /// `show_crypt_indicator` controls the CRYPT indicator byte in the frame:
+    /// - `Some(false)` omits the indicator (used for DCN when crypt key may be wrong)
+    /// - `Some(true)` includes the indicator
+    /// - `None` follows the current `crypt_enabled` state
+    ///
+    /// Note: the actual XOR encryption is governed by `crypt_enabled`, not this parameter.
+    pub async fn send_raw(&self, command: &Command, show_crypt_indicator: Option<bool>) -> Result<()> {
         if !*self.connected.read().await {
             return Err(RiscoError::Disconnected);
         }
@@ -277,7 +279,7 @@ impl CommandEngine {
         };
         let encoded = {
             let mut crypt = self.crypt.lock().await;
-            crypt.encode_command(&command_str, &cmd_id_str, force_crypt)
+            crypt.encode_command(&command_str, &cmd_id_str, show_crypt_indicator)
         };
 
         let mut writer = self.writer.lock().await;
@@ -339,8 +341,8 @@ impl CommandEngine {
     ///
     /// DCN is sent fully unencrypted so the panel can understand it even if the
     /// encryption key was wrong or partially established. We disable the XOR
-    /// cipher before sending, since `force_crypt` only controls the CRYPT
-    /// indicator byte — not the actual XOR cipher which is governed by
+    /// cipher before sending, since `show_crypt_indicator` only controls the
+    /// CRYPT indicator byte — not the actual XOR cipher which is governed by
     /// `crypt_enabled`. Since we're disconnecting, we don't need to restore it.
     /// The DCN is sent before setting `connected = false` so that the
     /// disconnected guard in `send_raw` doesn't block it.
