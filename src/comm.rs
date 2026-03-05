@@ -74,10 +74,13 @@ impl RiscoComm {
 
         // Propagate any discovered panel ID from the crypto engine back into
         // the config so it persists across reconnection attempts.
-        if let Ok(engine) = self.engine() {
-            let crypt_arc = engine.crypt();
-            let crypt = crypt_arc.lock().await;
-            let actual_panel_id = crypt.panel_id();
+        let actual_panel_id = if let Ok(engine) = self.engine() {
+            let crypt = engine.crypt().lock().await;
+            Some(crypt.panel_id())
+        } else {
+            None
+        };
+        if let Some(actual_panel_id) = actual_panel_id {
             if actual_panel_id != self.config.panel_id {
                 info!(
                     "Panel ID updated via discovery: {} -> {}",

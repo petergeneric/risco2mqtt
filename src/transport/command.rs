@@ -78,48 +78,48 @@ impl CommandEngine {
     }
 
     /// Get shared references to internal state for the reader task.
-    pub fn pending_commands(&self) -> Arc<Mutex<HashMap<u8, oneshot::Sender<String>>>> {
-        self.pending.clone()
+    pub fn pending_commands(&self) -> &Arc<Mutex<HashMap<u8, oneshot::Sender<String>>>> {
+        &self.pending
     }
 
-    pub fn crypt(&self) -> Arc<Mutex<RiscoCrypt>> {
-        self.crypt.clone()
+    pub fn crypt(&self) -> &Arc<Mutex<RiscoCrypt>> {
+        &self.crypt
     }
 
-    pub fn connected_flag(&self) -> Arc<RwLock<bool>> {
-        self.connected.clone()
+    pub fn connected_flag(&self) -> &Arc<RwLock<bool>> {
+        &self.connected
     }
 
-    pub fn in_prog_flag(&self) -> Arc<RwLock<bool>> {
-        self.in_prog.clone()
+    pub fn in_prog_flag(&self) -> &Arc<RwLock<bool>> {
+        &self.in_prog
     }
 
-    pub fn in_crypt_test_flag(&self) -> Arc<RwLock<bool>> {
-        self.in_crypt_test.clone()
+    pub fn in_crypt_test_flag(&self) -> &Arc<RwLock<bool>> {
+        &self.in_crypt_test
     }
 
-    pub fn bad_crc_count(&self) -> Arc<Mutex<u32>> {
-        self.bad_crc_count.clone()
+    pub fn bad_crc_count(&self) -> &Arc<Mutex<u32>> {
+        &self.bad_crc_count
     }
 
-    pub fn last_crc_error(&self) -> Arc<Mutex<Option<Instant>>> {
-        self.last_crc_error.clone()
+    pub fn last_crc_error(&self) -> &Arc<Mutex<Option<Instant>>> {
+        &self.last_crc_error
     }
 
-    pub fn last_misunderstood(&self) -> Arc<Mutex<Option<String>>> {
-        self.last_misunderstood.clone()
+    pub fn last_misunderstood(&self) -> &Arc<Mutex<Option<String>>> {
+        &self.last_misunderstood
     }
 
-    pub fn last_received_buffer(&self) -> Arc<Mutex<Option<Vec<u8>>>> {
-        self.last_received_buffer.clone()
+    pub fn last_received_buffer(&self) -> &Arc<Mutex<Option<Vec<u8>>>> {
+        &self.last_received_buffer
     }
 
-    pub fn last_received_unsolicited_id(&self) -> Arc<Mutex<Option<u8>>> {
-        self.last_received_unsolicited_id.clone()
+    pub fn last_received_unsolicited_id(&self) -> &Arc<Mutex<Option<u8>>> {
+        &self.last_received_unsolicited_id
     }
 
-    pub fn sequence_id(&self) -> Arc<Mutex<u8>> {
-        self.sequence_id.clone()
+    pub fn sequence_id(&self) -> &Arc<Mutex<u8>> {
+        &self.sequence_id
     }
 
     /// Set connected state.
