@@ -302,8 +302,10 @@ async fn process_message(
     engine: &Arc<CommandEngine>,
     event_tx: &EventSender,
 ) {
-    // Store raw encrypted bytes before decoding (needed for offline panel ID discovery)
-    *engine.last_received_buffer().lock().await = Some(data.to_vec());
+    // Store raw encrypted bytes only during crypt test (needed for offline panel ID discovery)
+    if *engine.in_crypt_test_flag().read().await {
+        *engine.last_received_buffer().lock().await = Some(data.to_vec());
+    }
 
     let decoded = {
         let crypt_arc = engine.crypt();
