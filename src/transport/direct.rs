@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::PanelConfig;
 use crate::constants::{DLE, ETX};
-use crate::crypto::RiscoCrypt;
+use crate::crypto::{DecodedMessage, RiscoCrypt};
 use crate::error::{PanelErrorCode, RiscoError, Result};
 use crate::event::{EventSender, PanelEvent};
 use crate::protocol::Command;
@@ -313,7 +313,9 @@ async fn process_message(
         crypt.decode_message(data)
     };
 
-    if !decoded.crc_valid {
+    let DecodedMessage { cmd_id, command, crc_valid } = decoded;
+
+    if !crc_valid {
         let in_crypt_test = *engine.in_crypt_test_flag().read().await;
         if !in_crypt_test {
             // Bad CRC in normal mode
@@ -324,11 +326,11 @@ async fn process_message(
                 return;
             }
             // Store misunderstood data
-            *engine.last_misunderstood().lock().await = Some(decoded.command.clone());
+            *engine.last_misunderstood().lock().await = Some(command);
         } else {
             // Bad CRC during crypt test = wrong key
             *engine.crypt_key_valid.write().await = Some(false);
-            *engine.last_misunderstood().lock().await = Some(decoded.command.clone());
+            *engine.last_misunderstood().lock().await = Some(command);
         }
         return;
     }
@@ -338,18 +340,16 @@ async fn process_message(
         *engine.crypt_key_valid.write().await = Some(true);
     }
 
-    let receive_id = &decoded.cmd_id;
-
-    if receive_id.is_empty() && CommandEngine::is_error_code(&decoded.command) {
+    if cmd_id.is_empty() && CommandEngine::is_error_code(&command) {
         // Error response with no command ID
-        *engine.last_misunderstood().lock().await = Some(decoded.command.clone());
+        *engine.last_misunderstood().lock().await = Some(command);
         return;
     }
 
-    if let Ok(id_num) = receive_id.parse::<u8>() {
+    if let Ok(id_num) = cmd_id.parse::<u8>() {
         if id_num >= 50 {
             // Unsolicited message from panel — always send ACK
-            let _ = engine.send_ack(receive_id).await;
+            let _ = engine.send_ack(&cmd_id).await;
 
             // Check for duplicate message ID
             let last_id_arc = engine.last_received_unsolicited_id();
@@ -359,14 +359,14 @@ async fn process_message(
             } else {
                 *last_id = Some(id_num);
                 debug!("Unsolicited data from panel (id={})", id_num);
-                emit_panel_data(event_tx, &decoded.command);
+                emit_panel_data(event_tx, command);
             }
         } else {
             // Response to our command — route to matching pending command by ID
             let pending_arc = engine.pending_commands();
             let mut pending = pending_arc.lock().await;
             if let Some(sender) = pending.remove(&id_num) {
-                let _ = sender.send(decoded.command.clone());
+                let _ = sender.send(command);
                 debug!("Routed response for seq {}", id_num);
             } else {
                 debug!("No pending command for seq {} (possibly already timed out)", id_num);
@@ -386,13 +386,13 @@ async fn process_message(
 /// Note: the panel may also send `EVENT=` messages (1-256 char event log
 /// entries) which are not currently handled. These carry event log data,
 /// not real-time status.
-fn emit_panel_data(event_tx: &EventSender, command: &str) {
+fn emit_panel_data(event_tx: &EventSender, command: String) {
     if command.starts_with("ZSTT")
         || command.starts_with("PSTT")
         || command.starts_with("OSTT")
         || command.starts_with("SSTT")
     {
-        let _ = event_tx.send(PanelEvent::PanelData(command.to_string()));
+        let _ = event_tx.send(PanelEvent::PanelData(command));
     } else if command.starts_with("BOOTRES") {
         // Panel has rebooted — all session state (encryption, device cache)
         // is now invalid. Trigger a full reconnection cycle.

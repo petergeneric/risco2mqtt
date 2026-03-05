@@ -80,14 +80,14 @@ impl RiscoComm {
         } else {
             None
         };
-        if let Some(actual_panel_id) = actual_panel_id {
-            if actual_panel_id != self.config.panel_id {
-                info!(
-                    "Panel ID updated via discovery: {} -> {}",
-                    self.config.panel_id, actual_panel_id
-                );
-                self.config.panel_id = actual_panel_id;
-            }
+        if let Some(actual_panel_id) = actual_panel_id
+            && actual_panel_id != self.config.panel_id
+        {
+            info!(
+                "Panel ID updated via discovery: {} -> {}",
+                self.config.panel_id, actual_panel_id
+            );
+            self.config.panel_id = actual_panel_id;
         }
 
         // Panel connected — verify type and configure
