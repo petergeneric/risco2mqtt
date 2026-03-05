@@ -270,8 +270,10 @@ impl CommandEngine {
 
         let command_str = command.to_wire_string();
         let cmd_id_str = {
-            let seq = self.sequence_id.lock().await;
-            format!("{:02}", *seq)
+            let mut seq = self.sequence_id.lock().await;
+            let id = *seq;
+            *seq = if *seq >= 49 { 1 } else { *seq + 1 };
+            format!("{:02}", id)
         };
         let encoded = {
             let mut crypt = self.crypt.lock().await;
