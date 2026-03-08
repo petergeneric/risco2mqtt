@@ -17,6 +17,7 @@ disable_risco_cloud = true
 
 [mqtt]
 url = "mqtt://127.0.0.1:1883"
+# url = "mqtt://myuser:mypassword@127.0.0.1:1883"  # with credentials
 client_id = "risco-bridge"
 subscribe_topic = "risco/cmd"
 publish_topic = "risco"

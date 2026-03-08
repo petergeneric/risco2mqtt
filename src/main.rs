@@ -1068,7 +1068,11 @@ async fn main() -> Result<()> {
     let mut arm_ready_timeout_ms = config.panel.arm_ready_timeout_ms;
     let mut zone_names = Arc::new(config.zone_names);
 
-    let (mut mqtt_host, mut mqtt_port) = parse_mqtt_url(&config.mqtt.url)?;
+    let MqttUrlParts {
+        host: mut mqtt_host,
+        port: mut mqtt_port,
+        credentials: mut mqtt_credentials,
+    } = parse_mqtt_url(&config.mqtt.url)?;
 
     let mut sighup = signal(SignalKind::hangup())?;
     let mut sigterm = signal(SignalKind::terminate())?;
@@ -1093,6 +1097,9 @@ async fn main() -> Result<()> {
         let mut mqtt_opts =
             MqttOptions::new(&mqtt_client_id, &mqtt_host, mqtt_port);
         mqtt_opts.set_keep_alive(Duration::from_secs(30));
+        if let Some((ref username, ref password)) = mqtt_credentials {
+            mqtt_opts.set_credentials(username, password);
+        }
         let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 256);
 
         // Subscribe to command topic
@@ -1355,10 +1362,11 @@ async fn main() -> Result<()> {
             }) {
             Ok(new_config) => match build_panel_config(&new_config.panel) {
                 Ok(new_panel_config) => match parse_mqtt_url(&new_config.mqtt.url) {
-                    Ok((new_host, new_port)) => {
+                    Ok(new_mqtt) => {
                         panel_config = new_panel_config;
-                        mqtt_host = new_host;
-                        mqtt_port = new_port;
+                        mqtt_host = new_mqtt.host;
+                        mqtt_port = new_mqtt.port;
+                        mqtt_credentials = new_mqtt.credentials;
                         mqtt_client_id = new_config.mqtt.client_id;
                         publish_topic = new_config.mqtt.publish_topic;
                         subscribe_topic = new_config.mqtt.subscribe_topic;
@@ -1381,20 +1389,35 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Parse an MQTT URL like "mqtt://host:port" into (host, port).
-fn parse_mqtt_url(url: &str) -> Result<(String, u16)> {
-    let stripped = url
-        .strip_prefix("mqtt://")
-        .or_else(|| url.strip_prefix("tcp://"))
-        .unwrap_or(url);
+struct MqttUrlParts {
+    host: String,
+    port: u16,
+    credentials: Option<(String, String)>,
+}
 
-    let (host, port_str) = stripped
-        .rsplit_once(':')
-        .context("MQTT URL must be in format mqtt://host:port")?;
+/// Parse an MQTT URL like "mqtt://[user:pass@]host:port".
+fn parse_mqtt_url(raw: &str) -> Result<MqttUrlParts> {
+    let parsed = url::Url::parse(raw).context("Invalid MQTT URL")?;
 
-    let port: u16 = port_str
-        .parse()
-        .context("Invalid MQTT port number")?;
+    let host = parsed
+        .host_str()
+        .context("MQTT URL must contain a host")?
+        .to_string();
 
-    Ok((host.to_string(), port))
+    let port = parsed.port().unwrap_or(1883);
+
+    let credentials = if !parsed.username().is_empty() {
+        Some((
+            parsed.username().to_string(),
+            parsed.password().unwrap_or("").to_string(),
+        ))
+    } else {
+        None
+    };
+
+    Ok(MqttUrlParts {
+        host,
+        port,
+        credentials,
+    })
 }
