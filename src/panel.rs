@@ -487,6 +487,13 @@ impl RiscoPanel {
         Ok(response == "ACK")
     }
 
+    /// Send an arbitrary raw command to the panel and return the response string.
+    pub async fn send_raw_command(&self, command: &str) -> Result<String> {
+        self.comm
+            .send_command(&Command::Raw(command.to_string()), false)
+            .await
+    }
+
     /// Toggle an output.
     pub async fn toggle_output(&self, id: u32) -> Result<bool> {
         debug!("Toggle output {}", id);

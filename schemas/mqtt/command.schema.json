@@ -17,10 +17,15 @@
         "DISARM",
         "ZONE_BYPASS_ENABLE",
         "ZONE_BYPASS_DISABLE",
-        "ARM_GROUP"
+        "ARM_GROUP",
+        "RAW_CMD"
       ]
     },
     "op_id": { "type": "string" },
+    "command": {
+      "type": "string",
+      "description": "Raw panel command string (used with RAW_CMD)"
+    },
     "zone": { "type": "integer" },
     "partition": { "type": "integer" },
     "group": { "type": "integer" },

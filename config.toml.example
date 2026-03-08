@@ -22,6 +22,7 @@ client_id = "risco-bridge"
 subscribe_topic = "risco/cmd"
 publish_topic = "risco"
 snapshot_interval_secs = 60
+# allow_raw_commands = false  # enable RAW_CMD op for sending arbitrary panel commands
 
 [zone_names]
 # Override zone labels by zone ID

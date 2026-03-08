@@ -138,6 +138,8 @@ struct MqttToml {
     publish_topic: String,
     #[serde(default = "default_snapshot_interval")]
     snapshot_interval_secs: u64,
+    #[serde(default)]
+    allow_raw_commands: bool,
 }
 
 fn default_client_id() -> String {
@@ -292,6 +294,8 @@ struct MqttCommand {
     partition: Option<u32>,
     #[serde(default)]
     group: Option<u8>,
+    #[serde(default)]
+    command: Option<String>,
     #[serde(default)]
     exclude_if_tripped: Vec<u32>,
     #[serde(default)]
@@ -690,6 +694,7 @@ async fn handle_command(
     topic: &str,
     panel: &RiscoPanel,
     zone_names: &HashMap<u32, String>,
+    allow_raw_commands: bool,
 ) {
     // Parse the raw payload as a JSON value for the CMD_ACK src field
     let src_json = serde_json::from_str::<serde_json::Value>(payload_str).ok();
@@ -780,6 +785,34 @@ async fn handle_command(
             let label = format!("zone {id}");
             let success = exec_panel_cmd(op, &label, panel.toggle_bypass_zone(id)).await;
             publish_cmd_ack(client, topic, success, src_json, None).await;
+        }
+
+        "RAW_CMD" => {
+            if !allow_raw_commands {
+                warn!("RAW_CMD rejected: allow_raw_commands is disabled in config");
+                publish_cmd_ack(client, topic, false, src_json, None).await;
+                return;
+            }
+            let raw = match cmd.command {
+                Some(ref c) => c,
+                None => {
+                    warn!("RAW_CMD: missing command field");
+                    publish_cmd_ack(client, topic, false, src_json, None).await;
+                    return;
+                }
+            };
+            info!("Command: RAW_CMD '{raw}'");
+            match panel.send_raw_command(raw).await {
+                Ok(response) => {
+                    let data = serde_json::to_value(&response).ok();
+                    publish_cmd_ack(client, topic, true, src_json, data).await;
+                }
+                Err(e) => {
+                    warn!("RAW_CMD failed: {e}");
+                    let data = serde_json::to_value(e.to_string()).ok();
+                    publish_cmd_ack(client, topic, false, src_json, data).await;
+                }
+            }
         }
 
         other => {
@@ -1066,6 +1099,7 @@ async fn main() -> Result<()> {
     let mut subscribe_topic = config.mqtt.subscribe_topic;
     let mut snapshot_interval_secs = config.mqtt.snapshot_interval_secs;
     let mut arm_ready_timeout_ms = config.panel.arm_ready_timeout_ms;
+    let mut allow_raw_commands = config.mqtt.allow_raw_commands;
     let mut zone_names = Arc::new(config.zone_names);
 
     let MqttUrlParts {
@@ -1224,6 +1258,7 @@ async fn main() -> Result<()> {
         let zn_cmds = Arc::clone(&zone_names);
         let sub_topic = subscribe_topic.clone();
         let arm_timeout = arm_ready_timeout_ms;
+        let raw_cmds_enabled = allow_raw_commands;
         let mqtt_handle = tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
@@ -1274,6 +1309,7 @@ async fn main() -> Result<()> {
                                             &topic_cmds,
                                             &panel_lock,
                                             &zn_cmds,
+                                            raw_cmds_enabled,
                                         )
                                         .await;
                                     }
@@ -1372,6 +1408,7 @@ async fn main() -> Result<()> {
                         subscribe_topic = new_config.mqtt.subscribe_topic;
                         snapshot_interval_secs = new_config.mqtt.snapshot_interval_secs;
                         arm_ready_timeout_ms = new_config.panel.arm_ready_timeout_ms;
+                        allow_raw_commands = new_config.mqtt.allow_raw_commands;
                         zone_names = Arc::new(new_config.zone_names);
                         info!("Config reloaded successfully");
                     }
