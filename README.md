@@ -3,6 +3,17 @@
 This program is based on a Rust rewrite of the TypeScript [risco-lan-bridge](https://github.com/vanackej/risco-lan-bridge/), built for more resource-constrained environments (required memory 3-4MB).
 It is intended to be used as a "bridge" between an application communicating via MQTT and a Risco alarm Panel (can also work with Electronic Line products but this has not been tested).
 
+## Panel password
+
+Set `panel_password` under `[panel]` in your config file to the current remote
+access password on your panel. Library callers must set it on `PanelConfig`
+before connecting. The Rust examples read it from `RISCO_PANEL_PASSWORD`.
+The bridge no longer supplies a default. Library callers can match
+`RiscoError::BadAccessCode` as a unit variant when the panel rejects the password.
+
+MQTT acknowledgements for raw authentication commands preserve the request
+context with a redacted command and omit the panel's response.
+
 ## Compatibility
 Compatible with these central units and these features:
 ||Agility|Wicomm|Wicomm Pro|LightSYS|ProSYSPlus/GTPlus|Other|

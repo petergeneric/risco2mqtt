@@ -6,10 +6,12 @@ use risco_lan_bridge::{PanelConfig, PanelEvent, PanelType, RiscoPanel, ZoneStatu
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let password = std::env::var("RISCO_PANEL_PASSWORD")
+        .map_err(|_| anyhow::anyhow!("Set RISCO_PANEL_PASSWORD to a valid UTF-8 panel password"))?;
     let config = PanelConfig::builder()
         .panel_type(PanelType::Agility)
         .panel_ip("192.168.0.100")
-        .panel_password("5678")
+        .panel_password(password)
         .panel_id(1)
         .build();
 

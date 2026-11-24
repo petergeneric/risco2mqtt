@@ -13,7 +13,7 @@ use tracing::{debug, error, warn};
 
 use crate::crypto::RiscoCrypt;
 use crate::error::{PanelErrorCode, RiscoError, Result};
-use crate::protocol::Command;
+use crate::protocol::{Command, redacted_auth_command};
 
 /// Tracks pending commands and routes responses back to callers via oneshot channels.
 pub struct CommandEngine {
@@ -151,6 +151,8 @@ impl CommandEngine {
     /// see [`Command::timeout_ms`].
     pub async fn send_command(&self, command: &Command, is_prog_cmd: bool) -> Result<String> {
         let command_str = command.to_wire_string();
+        let redacted = redacted_auth_command(&command_str);
+        let label = redacted.unwrap_or(&command_str);
 
         // Wait while in prog mode and this is not a prog command.
         // Do this before acquiring the pipeline slot so we don't hold
@@ -173,9 +175,9 @@ impl CommandEngine {
             let timeout_duration = self.get_timeout(command).await;
 
             if attempt > 1 {
-                debug!("Retrying command (attempt {}): {}", attempt, command_str);
+                debug!("Retrying command (attempt {}): {}", attempt, label);
             } else {
-                debug!("Sending command: {}", command_str);
+                debug!("Sending command: {}", label);
             }
 
             let (tx, rx) = oneshot::channel();
@@ -210,9 +212,13 @@ impl CommandEngine {
             match timeout(timeout_duration, rx).await {
                 Ok(Ok(response)) => {
                     if attempt > 1 {
-                        warn!("Command succeeded on retry (attempt {}/{}): {}", attempt, max_attempts, command_str);
+                        warn!("Command succeeded on retry (attempt {}/{}): {}", attempt, max_attempts, label);
                     }
-                    debug!("Received response for seq {}: {}", cmd_id, response);
+                    if redacted.is_some() {
+                        debug!("Received authentication response for seq {}", cmd_id);
+                    } else {
+                        debug!("Received response for seq {}: {}", cmd_id, response);
+                    }
                     return Ok(response);
                 }
                 Ok(Err(_)) => {
@@ -224,19 +230,19 @@ impl CommandEngine {
                     // Timeout — clean up and maybe retry
                     self.pending.lock().await.remove(&cmd_id);
                     if attempt == max_attempts {
-                        debug!("Command timeout after {} attempts: {} {}", max_attempts, cmd_id_str, command_str);
+                        debug!("Command timeout after {} attempts: {} {}", max_attempts, cmd_id_str, label);
                         return Err(RiscoError::CommandTimeout {
-                            command: command_str.clone(),
+                            command: label.to_string(),
                         });
                     }
-                    warn!("Command timeout (attempt {}/{}, {}ms): {}", attempt, max_attempts, timeout_duration.as_millis(), command_str);
+                    warn!("Command timeout (attempt {}/{}, {}ms): {}", attempt, max_attempts, timeout_duration.as_millis(), label);
                 }
             }
         }
 
         // Should not reach here, but just in case
         Err(RiscoError::CommandTimeout {
-            command: command_str,
+            command: label.to_string(),
         })
     }
 
@@ -356,5 +362,33 @@ impl CommandEngine {
         let _ = self.send_raw(&Command::Dcn, Some(false)).await;
         self.set_connected(false).await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::{TcpListener, TcpStream};
+
+    #[tokio::test(start_paused = true)]
+    async fn auth_timeout_redacts_password_but_keeps_it_on_the_wire() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let socket = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+        let (mut panel, _) = listener.accept().await.unwrap();
+        let (_, writer) = socket.into_split();
+        let engine = CommandEngine::new(writer, RiscoCrypt::new(1), 1);
+
+        let command = Command::Rmt {
+            password: "452173".to_string(),
+        };
+        let error = engine.send_command(&command, false).await.unwrap_err();
+        assert_eq!(error.to_string(), "Command timeout: RMT=<redacted>");
+        assert!(!format!("{error:?}").contains("452173"));
+
+        let expected = RiscoCrypt::new(1).encode_command("RMT=452173", "01", None);
+        let mut bytes = vec![0; expected.len()];
+        panel.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(bytes, expected);
     }
 }

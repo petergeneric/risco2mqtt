@@ -5,7 +5,8 @@ panel_type = "LightSys"
 panel_ip = "192.168.1.2"
 panel_port = 1000
 panel_id = 1
-panel_password = "1234"
+# Set this to the remote access password already configured on your panel.
+panel_password = ""
 discover_code = true
 reconnect_delay_ms = 2000
 ntp_server = "192.168.1.1"

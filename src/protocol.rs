@@ -42,7 +42,7 @@ use crate::config::ArmType;
 ///
 /// Most commands are XOR-encrypted on the wire. Nine commands are
 /// explicitly unencrypted — see [`UNENCRYPTED_COMMANDS`](crate::constants::UNENCRYPTED_COMMANDS).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Command {
     /// `RMT=<password>` — Remote authentication (unencrypted).
     /// Password is 1-4 digit numeric code, zero-padded to at least 4 digits.
@@ -164,6 +164,23 @@ pub enum Command {
     ToggleOutput { id: u32 },
     /// Raw command string (for any unlisted commands).
     Raw(String),
+}
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let wire = self.to_wire_string();
+        f.debug_tuple("Command")
+            .field(&redacted_auth_command(&wire).unwrap_or(&wire))
+            .finish()
+    }
+}
+
+/// Return a diagnostic label for an authentication command, without its password.
+pub fn redacted_auth_command(wire: &str) -> Option<&'static str> {
+    let (name, _) = wire.split_once('=')?;
+    name.trim()
+        .eq_ignore_ascii_case("RMT")
+        .then_some("RMT=<redacted>")
 }
 
 impl Command {
@@ -345,13 +362,13 @@ mod tests {
 
     #[test]
     fn test_command_wire_strings() {
-        assert_eq!(
-            Command::Rmt {
-                password: "5678".to_string()
-            }
-            .to_wire_string(),
-            "RMT=5678"
-        );
+        let authentication = Command::Rmt {
+            password: "452173".to_string(),
+        };
+        assert_eq!(authentication.to_wire_string(), "RMT=452173");
+        assert!(!format!("{authentication:?}").contains("452173"));
+        let raw = Command::Raw(authentication.to_wire_string());
+        assert!(!format!("{raw:?}").contains("452173"));
         assert_eq!(Command::Lcl.to_wire_string(), "LCL");
         assert_eq!(Command::Clock.to_wire_string(), "CLOCK");
         assert_eq!(

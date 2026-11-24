@@ -29,6 +29,9 @@ impl DirectTcpTransport {
     ///
     /// Sequence: TCP connect → connect_delay_seconds delay → RMT auth → LCL → crypt test → PanelConnected
     pub async fn connect(config: &PanelConfig, event_tx: EventSender) -> Result<Self> {
+        if config.panel_password.trim().is_empty() {
+            return Err(RiscoError::MissingPanelPassword);
+        }
         info!(
             "Connecting to panel at {}:{}",
             config.panel_ip, config.panel_port
@@ -70,24 +73,19 @@ impl DirectTcpTransport {
         // Authenticate
         let password = &config.panel_password;
         let code_len = password.len().max(4);
-        let padded_password = format!("{:0>width$}", password, width = code_len);
-        let rmt_cmd = Command::Rmt { password: padded_password.clone() };
+        let rmt_cmd = Command::Rmt {
+            password: format!("{:0>width$}", password, width = code_len),
+        };
 
         debug!("Sending RMT authentication");
         let response = command_engine.send_command(&rmt_cmd, false).await?;
 
         if !response.contains("ACK") {
             if PanelErrorCode::is_error_code(&response) {
-                if config.discover_code {
-                    // Password discovery would happen here
-                    error!("Bad access code: {}. Discovery not yet implemented in connect flow.", password);
-                }
-                return Err(RiscoError::BadAccessCode {
-                    code: password.clone(),
-                });
+                return Err(RiscoError::BadAccessCode);
             }
             return Err(RiscoError::InvalidResponse {
-                details: format!("RMT response: {}", response),
+                details: "unexpected response to RMT authentication".to_string(),
             });
         }
         debug!("RMT authentication successful");
@@ -405,6 +403,17 @@ fn emit_panel_data(event_tx: &EventSender, command: String) {
 mod tests {
     use super::*;
     use crate::constants::{DLE, ETX, STX, CRYPT};
+
+    #[tokio::test]
+    async fn missing_password_is_rejected_before_connecting() {
+        let config = PanelConfig::builder()
+            .panel_ip("127.0.0.1")
+            .panel_port(0)
+            .build();
+        let (events, _) = crate::event::event_channel(1);
+        let result = DirectTcpTransport::connect(&config, events).await;
+        assert!(matches!(result, Err(RiscoError::MissingPanelPassword)));
+    }
 
     #[test]
     fn test_split_single_message() {

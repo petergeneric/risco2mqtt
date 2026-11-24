@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
 
+use risco_lan_bridge::protocol::redacted_auth_command;
 use risco_lan_bridge::{
     ArmType, PanelConfig, PanelEvent, PanelType, PartitionStatusFlags, RiscoPanel, ZoneStatusFlags,
 };
@@ -35,12 +36,33 @@ struct Cli {
 // Config
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct Config {
     panel: PanelToml,
     mqtt: MqttToml,
     #[serde(default, deserialize_with = "deserialize_zone_names")]
     zone_names: HashMap<u32, String>,
+}
+
+fn load_config(path: &str) -> Result<Config> {
+    let text = std::fs::read_to_string(path).context("Failed to read config file")?;
+    parse_config(&text)
+}
+
+fn parse_config(text: &str) -> Result<Config> {
+    // A TOML error can quote source text, including credentials.
+    toml::from_str(text).map_err(|err| match err.span() {
+        Some(span) => {
+            let line = text
+                .bytes()
+                .take(span.start)
+                .filter(|&b| b == b'\n')
+                .count()
+                + 1;
+            anyhow::anyhow!("Failed to parse config file near line {line}")
+        }
+        None => anyhow::anyhow!("Failed to parse config file"),
+    })
 }
 
 fn deserialize_zone_names<'de, D>(deserializer: D) -> Result<HashMap<u32, String>, D::Error>
@@ -58,7 +80,7 @@ where
         .collect()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct PanelToml {
     /// Panel type name (e.g., "LightSys", "Agility"). Optional: when omitted,
     /// the panel type is auto-discovered from the PNLCNF response at connect time.
@@ -69,7 +91,7 @@ struct PanelToml {
     panel_port: u16,
     #[serde(default = "default_panel_id")]
     panel_id: u16,
-    #[serde(default = "default_panel_password")]
+    #[serde(default)]
     panel_password: String,
     #[serde(default)]
     discover_code: bool,
@@ -99,9 +121,6 @@ fn default_panel_port() -> u16 {
 fn default_panel_id() -> u16 {
     1
 }
-fn default_panel_password() -> String {
-    "5678".to_string()
-}
 fn default_reconnect_delay() -> u64 {
     10000
 }
@@ -127,7 +146,7 @@ fn default_arm_ready_timeout() -> u64 {
     5000
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct MqttToml {
     url: String,
     #[serde(default = "default_client_id")]
@@ -170,6 +189,10 @@ fn parse_panel_type(s: &str) -> Result<PanelType> {
 }
 
 fn build_panel_config(toml: &PanelToml) -> Result<PanelConfig> {
+    anyhow::ensure!(
+        !toml.panel_password.trim().is_empty(),
+        "Set panel_password in the [panel] section"
+    );
     let panel_type = match &toml.panel_type {
         Some(pt) => parse_panel_type(pt)?,
         None => {
@@ -274,6 +297,29 @@ struct MqttCmdAck {
     data: Option<serde_json::Value>,
 }
 
+impl MqttCmdAck {
+    fn new(
+        success: bool,
+        mut src: Option<serde_json::Value>,
+        mut data: Option<serde_json::Value>,
+    ) -> Self {
+        if let Some(command) = src.as_mut().and_then(|src| src.get_mut("command"))
+            && let Some(redacted) = command.as_str().and_then(redacted_auth_command)
+        {
+            *command = redacted.into();
+            // The panel's response can echo the authentication request.
+            data = None;
+        }
+        Self {
+            now: now_epoch_ms(),
+            op: "CMD_ACK".to_string(),
+            success,
+            src,
+            data,
+        }
+    }
+}
+
 // Simple event with just {now, op}
 #[derive(Serialize)]
 struct MqttSimpleEvent {
@@ -300,6 +346,21 @@ struct MqttCommand {
     exclude_if_tripped: Vec<u32>,
     #[serde(default)]
     always_exclude: Vec<u32>,
+}
+
+fn parse_mqtt_command(payload: &str) -> Result<MqttCommand> {
+    anyhow::ensure!(
+        payload.trim_start().starts_with('{'),
+        "MQTT command must be a JSON object"
+    );
+    // Serde allows positional input for structs and can quote invalid values.
+    serde_json::from_str(payload).map_err(|err| {
+        anyhow::anyhow!(
+            "Invalid MQTT command at line {}, column {}",
+            err.line(),
+            err.column()
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -360,13 +421,7 @@ async fn publish_cmd_ack(
     src: Option<serde_json::Value>,
     data: Option<serde_json::Value>,
 ) {
-    let msg = MqttCmdAck {
-        now: now_epoch_ms(),
-        op: "CMD_ACK".to_string(),
-        success,
-        src,
-        data,
-    };
+    let msg = MqttCmdAck::new(success, src, data);
     publish_json(client, topic, &msg, false).await;
 }
 
@@ -801,7 +856,6 @@ async fn handle_command(
                     return;
                 }
             };
-            info!("Command: RAW_CMD '{raw}'");
             match panel.send_raw_command(raw).await {
                 Ok(response) => {
                     let data = serde_json::to_value(&response).ok();
@@ -1089,9 +1143,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load config
-    let config_text =
-        std::fs::read_to_string(&cli.config).context("Failed to read config file")?;
-    let config: Config = toml::from_str(&config_text).context("Failed to parse config file")?;
+    let config = load_config(&cli.config)?;
 
     let mut panel_config = build_panel_config(&config.panel)?;
     let mut mqtt_client_id = config.mqtt.client_id;
@@ -1277,9 +1329,13 @@ async fn main() -> Result<()> {
                     Ok(Event::Incoming(Packet::Publish(msg))) => {
                         if msg.topic == sub_topic {
                             let payload = String::from_utf8_lossy(&msg.payload);
-                            match serde_json::from_str::<MqttCommand>(&payload) {
+                            match parse_mqtt_command(&payload) {
                                 Ok(cmd) => {
-                                    if cmd.op == "SNAPSHOT" {
+                                    if cmd.op == "RAW_CMD"
+                                        || cmd.command.as_deref().and_then(redacted_auth_command).is_some()
+                                    {
+                                        info!("MQTT command received: {}", cmd.op);
+                                    } else if cmd.op == "SNAPSHOT" {
                                         debug!("MQTT command received: {payload}");
                                     } else {
                                         info!("MQTT command received: {payload}");
@@ -1315,7 +1371,7 @@ async fn main() -> Result<()> {
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Failed to parse MQTT command: {e}");
+                                    warn!("{e}");
                                 }
                             }
                         }
@@ -1391,11 +1447,7 @@ async fn main() -> Result<()> {
 
         // Reload config from disk; keep previous config on failure
         info!("Reloading config from {}", cli.config);
-        match std::fs::read_to_string(&cli.config)
-            .context("Failed to read config file")
-            .and_then(|text| {
-                toml::from_str::<Config>(&text).context("Failed to parse config file")
-            }) {
+        match load_config(&cli.config) {
             Ok(new_config) => match build_panel_config(&new_config.panel) {
                 Ok(new_panel_config) => match parse_mqtt_url(&new_config.mqtt.url) {
                     Ok(new_mqtt) => {
@@ -1457,4 +1509,96 @@ fn parse_mqtt_url(raw: &str) -> Result<MqttUrlParts> {
         port,
         credentials,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mqtt_commands_require_objects_and_hide_invalid_values() {
+        let payload = r#"["RAW_CMD","request-1",null,null,null,"RMT=452173",[],[]]"#;
+        let Err(error) = parse_mqtt_command(payload) else {
+            panic!("positional commands must be rejected");
+        };
+        assert_eq!(error.to_string(), "MQTT command must be a JSON object");
+
+        let payload = r#"{
+            "op": "RAW_CMD",
+            "zone": "RMT=452173"
+        }"#;
+        let Err(error) = parse_mqtt_command(payload) else {
+            panic!("an invalid command field must be rejected");
+        };
+        assert!(error.to_string().starts_with("Invalid MQTT command at line 3, column "));
+        assert!(!format!("{error:?}").contains("452173"));
+
+        let command = parse_mqtt_command(r#"  { "op": "RAW_CMD", "command": "CLOCK" }"#).unwrap();
+        assert_eq!(command.command.as_deref(), Some("CLOCK"));
+    }
+
+    #[test]
+    fn authentication_ack_redacts_the_request_and_omits_the_response() {
+        use serde_json::json;
+
+        let src = json!({
+            "op": "RAW_CMD",
+            "op_id": "request-1",
+            "command": "RMT=452173",
+        });
+        for data in [None, Some(json!("Echoed RMT=452173"))] {
+            let success = data.is_some();
+            let ack = serde_json::to_value(MqttCmdAck::new(success, Some(src.clone()), data))
+                .unwrap();
+            assert_eq!(ack["success"], success);
+            assert_eq!(ack["src"]["op"], "RAW_CMD");
+            assert_eq!(ack["src"]["op_id"], "request-1");
+            assert_eq!(ack["src"]["command"], "RMT=<redacted>");
+            assert!(ack.get("data").is_none());
+        }
+
+        let src = json!({ "op": "RAW_CMD", "command": "CLOCK" });
+        let data = json!("CLOCK=12:34");
+        let ack = MqttCmdAck::new(true, Some(src.clone()), Some(data.clone()));
+        assert_eq!(ack.src, Some(src));
+        assert_eq!(ack.data, Some(data));
+    }
+
+    #[test]
+    fn config_requires_an_explicit_panel_password() {
+        for setting in ["", "panel_password = \"\"", "panel_password = \"  \""] {
+            let config = parse_config(&format!(
+                "[panel]\npanel_ip = \"localhost\"\n{setting}\n[mqtt]\nurl = \"mqtt://localhost\""
+            ))
+            .unwrap();
+            let error = build_panel_config(&config.panel).unwrap_err();
+            assert!(error.to_string().contains("panel_password"));
+        }
+
+        let config = parse_config(
+            r#"
+            [panel]
+            panel_ip = "localhost"
+            panel_password = "5678"
+            [mqtt]
+            url = "mqtt://localhost"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            build_panel_config(&config.panel).unwrap().panel_password,
+            "5678"
+        );
+    }
+
+    #[test]
+    fn malformed_config_does_not_expose_panel_password() {
+        let Err(error) = parse_config(
+            "[panel]\npanel_password = 452173\n[mqtt]\nurl = \"mqtt://localhost\"",
+        ) else {
+            panic!("an unquoted panel password should be rejected");
+        };
+        assert_eq!(error.to_string(), "Failed to parse config file near line 2");
+        assert!(!format!("{error:?}").contains("452173"));
+    }
 }

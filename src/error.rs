@@ -194,8 +194,11 @@ pub enum RiscoError {
     #[error("Too many CRC errors (exceeded limit of {limit})")]
     CrcLimitExceeded { limit: u32 },
 
-    #[error("Bad access code: {code}")]
-    BadAccessCode { code: String },
+    #[error("Panel password must be configured")]
+    MissingPanelPassword,
+
+    #[error("Bad access code")]
+    BadAccessCode,
 
     #[error("Bad encryption key: panel_id={panel_id}")]
     BadCryptKey { panel_id: u16 },

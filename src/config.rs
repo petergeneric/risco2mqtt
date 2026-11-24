@@ -1,6 +1,8 @@
 // MIT License - Copyright (c) 2021 TJForc
 // Rust translation
 
+use std::fmt;
+
 use crate::constants::PanelHwType;
 
 /// Panel type with its device count limits.
@@ -137,7 +139,7 @@ pub enum ArmType {
 }
 
 /// Configuration for connecting to a Risco panel.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PanelConfig {
     /// Panel type (determines device limits)
     pub panel_type: PanelType,
@@ -145,7 +147,7 @@ pub struct PanelConfig {
     pub panel_ip: String,
     /// Panel TCP port (default: 1000)
     pub panel_port: u16,
-    /// Remote access password (default: 5678)
+    /// Remote access password. Must be set before connecting.
     pub panel_password: String,
     /// Panel encryption ID (0001-9999)
     pub panel_id: u16,
@@ -179,13 +181,24 @@ pub struct PanelConfig {
     pub connect_delay_ms: u64,
 }
 
+impl fmt::Debug for PanelConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PanelConfig")
+            .field("panel_type", &self.panel_type)
+            .field("panel_ip", &self.panel_ip)
+            .field("panel_port", &self.panel_port)
+            .field("panel_id", &self.panel_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for PanelConfig {
     fn default() -> Self {
         Self {
             panel_type: PanelType::Agility,
             panel_ip: "192.168.0.100".to_string(),
             panel_port: 1000,
-            panel_password: "5678".to_string(),
+            panel_password: String::new(),
             panel_id: 1,
             discover_code: true,
             auto_connect: true,
@@ -357,6 +370,7 @@ mod tests {
         assert_eq!(config.panel_ip, "10.0.0.1");
         assert_eq!(config.panel_password, "1234");
         assert_eq!(config.panel_id, 5678);
+        assert!(!format!("{config:?}").contains("1234"));
     }
 
     #[test]

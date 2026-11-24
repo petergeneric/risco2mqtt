@@ -134,7 +134,7 @@ pub async fn discover_access_code(
 
             match engine.send_command(&rmt_cmd, false).await {
                 Ok(response) if response.contains("ACK") => {
-                    info!("Discovered access code: {}", padded);
+                    info!("Access code discovered");
                     return Ok(padded);
                 }
                 Err(RiscoError::Disconnected) => {
@@ -142,7 +142,7 @@ pub async fn discover_access_code(
                     return Err(RiscoError::Disconnected);
                 }
                 _ => {
-                    debug!("Access code {} is not correct", padded);
+                    debug!("Access code rejected");
                 }
             }
 
